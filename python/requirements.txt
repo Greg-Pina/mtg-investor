@@ -1,0 +1,2 @@
+# Python dependencies for MTG Investor application
+pyedhrec>=1.0.0
