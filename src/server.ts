@@ -1,5 +1,7 @@
 import http from "http";
 import { createApp, initializeDatabase } from "./app";
+import cron from 'node-cron';
+import { ScryfallService } from './services/ScryfallService';
 
 async function startServer() {
   try {
@@ -34,6 +36,22 @@ async function startServer() {
       console.log('  GET  /api/mtg/investment - Get investment potential cards');
       console.log('  DELETE /api/mtg/card/:name - Delete card data');
     });
+
+    // Optional: schedule daily Scryfall ingest (disabled by default)
+    if (process.env.SCHEDULE_INGEST === 'true') {
+      const svc = ScryfallService.getInstance();
+      // Run at 02:00 every day
+      cron.schedule('0 2 * * *', async () => {
+        try {
+          console.log('[cron] Starting daily Scryfall ingest...');
+          const { saved } = await svc.ingestAllCards(2000); // conservative default
+          console.log(`[cron] Scryfall ingest completed. Saved ${saved} records.`);
+        } catch (err) {
+          console.error('[cron] Scryfall ingest failed:', err);
+        }
+      });
+      console.log('Daily Scryfall ingest scheduled at 02:00 (set SCHEDULE_INGEST=false to disable).');
+    }
 
     // Graceful shutdown
     process.on('SIGTERM', () => {

@@ -22,6 +22,10 @@ export function createApp(): Application {
   // Routes
   app.use("/api", routes);
 
+  // Serve static assets for a simple UI
+  const publicDir = path.join(__dirname, "../public");
+  app.use(express.static(publicDir));
+
   // 404 handler
   app.use((_req, res) => {
     res.status(404).json({ error: "Not found" });

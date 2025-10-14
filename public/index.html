@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MTG Investor – Scryfall Explorer</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 20px; }
+      header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      input[type="text"] { padding: 8px; min-width: 280px; }
+      button { padding: 8px 12px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; margin-top: 20px; }
+      .card { border: 1px solid #e3e3e3; border-radius: 8px; padding: 10px; background: #fff; }
+      .meta { font-size: 12px; color: #666; margin-top: 6px; }
+      .chart { margin-top: 24px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h2 style="margin: 0">Scryfall Explorer</h2>
+      <input id="q" type="text" placeholder="e:g: type:legendary t:creature o:draw cmc<=3" />
+  <button id="querySavedBtn">Search DB</button>
+  <button id="ingestBtn" title="Admin: run limited ingest">Ingest (admin)</button>
+  <input id="filter" type="text" placeholder="optional: set filter" />
+    </header>
+
+    <section class="chart">
+      <svg id="priceChart" width="800" height="240"></svg>
+    </section>
+
+    <section class="grid" id="cards"></section>
+
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script>
+      const $ = (sel) => document.querySelector(sel);
+      const cardsEl = $('#cards');
+      const chartEl = d3.select('#priceChart');
+
+      function renderCards(cards) {
+        cardsEl.innerHTML = cards.map(c => {
+          const img = c.image_uris?.small || c.raw?.image_uris?.small;
+          const name = c.name || c.raw?.name;
+          const setName = c.setName || c.raw?.set_name;
+          const rarity = c.rarity || c.raw?.rarity;
+          const usd = c.usd || c.prices?.usd || (c.raw?.prices?.usd ?? '');
+          return `<div class="card">
+            ${img ? `<img src="${img}" alt="${name}" style="width:100%; border-radius:6px;"/>` : ''}
+            <div><strong>${name || 'Unknown'}</strong></div>
+            <div class="meta">${setName || ''} • ${rarity || ''}</div>
+            <div class="meta">USD: ${usd || '—'}</div>
+          </div>`;
+        }).join('');
+      }
+
+      function renderPriceHistogram(cards) {
+        const prices = cards
+          .map(c => parseFloat(c.usd || c.prices?.usd || c.raw?.prices?.usd))
+          .filter(v => !Number.isNaN(v));
+        const svg = chartEl;
+        svg.selectAll('*').remove();
+        const width = +svg.attr('width');
+        const height = +svg.attr('height');
+        if (prices.length === 0) return;
+        const x = d3.scaleLinear().domain([0, d3.max(prices)]).range([40, width - 10]);
+        const bins = d3.bin().thresholds(20)(prices);
+        const y = d3.scaleLinear().domain([0, d3.max(bins, d => d.length)]).nice().range([height - 30, 10]);
+        svg.append('g').attr('transform', `translate(0,${height - 30})`).call(d3.axisBottom(x));
+        svg.append('g').attr('transform', 'translate(40,0)').call(d3.axisLeft(y));
+        svg.selectAll('rect')
+          .data(bins)
+          .enter().append('rect')
+          .attr('x', d => x(d.x0))
+          .attr('y', d => y(d.length))
+          .attr('width', d => Math.max(0, x(d.x1) - x(d.x0) - 1))
+          .attr('height', d => (height - 30) - y(d.length))
+          .attr('fill', '#4f46e5');
+      }
+
+      $('#querySavedBtn').addEventListener('click', async () => {
+        const q = $('#q').value.trim();
+        const setFilter = $('#filter').value.trim();
+        const params = new URLSearchParams();
+        if (q) params.set('q', q);
+        if (setFilter) params.set('setCode', setFilter);
+        params.set('limit', '50');
+        const res = await fetch(`/api/scryfall/cards?${params.toString()}`);
+        const json = await res.json();
+        const cards = json?.cards || [];
+        renderCards(cards);
+        renderPriceHistogram(cards);
+      });
+
+      $('#ingestBtn').addEventListener('click', async () => {
+        const res = await fetch('/api/scryfall/ingest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 250 }) });
+        const json = await res.json();
+        alert(`Ingest saved: ${json.saved || 0}`);
+      });
+    </script>
+  </body>
+</html>

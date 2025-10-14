@@ -278,3 +278,22 @@ Environment variables:
 ## License
 
 ISC License
+
+---
+
+## New: Scryfall Integration and UI
+
+### Endpoints
+- `GET /api/scryfall/search?q=...&page=1` – Live query Scryfall API
+- `POST /api/scryfall/save` – Body `{ q: string, pages?: number }` saves results to MongoDB (if connected)
+- `GET /api/scryfall/cards?q=&setCode=&rarity=&page=&limit=` – Query saved Scryfall cards from MongoDB
+
+### UI
+Open http://localhost:3000/ to try a minimal UI:
+- Run a live search and preview results
+- Save results to your DB
+- Query saved cards and view a D3 histogram of USD prices
+
+Notes:
+- The `scryfall_cards` schema keeps a `raw` copy of the card object for flexibility while denormalizing common fields.
+- If MongoDB is not connected, the save endpoint will no-op and return mapped cards, so the UI remains usable.
