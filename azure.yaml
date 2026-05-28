@@ -1,0 +1,17 @@
+name: mtg-investor
+metadata:
+  template: mtg-investor@0.0.1-beta
+
+services:
+  api:
+    project: .
+    language: ts
+    host: containerapp
+    docker:
+      path: ./Dockerfile
+      context: .
+
+  functions:
+    project: ./azure-functions
+    language: ts
+    host: function

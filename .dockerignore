@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.env
+configs/.env
+*.log
+coverage
+.nyc_output
+python/venv
+python/__pycache__
+azure-functions/node_modules
+azure-functions/dist

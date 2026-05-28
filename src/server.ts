@@ -2,9 +2,14 @@ import http from "http";
 import { createApp, initializeDatabase } from "./app";
 import cron from 'node-cron';
 import { ScryfallService } from './services/ScryfallService';
+import { validateEnv } from './config/env';
+import { InvestmentScoringService } from './services/InvestmentScoringService';
+import { AlertService } from './services/AlertService';
 
 async function startServer() {
   try {
+    validateEnv();
+
     // Initialize database connection
     await initializeDatabase();
     console.log('Database initialized successfully');
@@ -37,20 +42,40 @@ async function startServer() {
       console.log('  DELETE /api/mtg/card/:name - Delete card data');
     });
 
-    // Optional: schedule daily Scryfall ingest (disabled by default)
-    if (process.env.SCHEDULE_INGEST === 'true') {
+    // Skip local cron in production — Azure Functions Timer triggers handle scheduling
+    const isAzure = !!process.env.AZURE_FUNCTIONS_ENVIRONMENT || !!process.env.WEBSITE_SITE_NAME;
+    if (process.env.SCHEDULE_INGEST === 'true' && !isAzure) {
       const svc = ScryfallService.getInstance();
-      // Run at 02:00 every day
       cron.schedule('0 2 * * *', async () => {
         try {
           console.log('[cron] Starting daily Scryfall ingest...');
-          const { saved } = await svc.ingestAllCards(2000); // conservative default
+          const { saved } = await svc.ingestAllCards(2000);
           console.log(`[cron] Scryfall ingest completed. Saved ${saved} records.`);
         } catch (err) {
           console.error('[cron] Scryfall ingest failed:', err);
         }
       });
-      console.log('Daily Scryfall ingest scheduled at 02:00 (set SCHEDULE_INGEST=false to disable).');
+      cron.schedule('0 3 * * *', async () => {
+        try {
+          console.log('[cron] Starting investment score update...');
+          const scorer = new InvestmentScoringService();
+          await scorer.updateAllScores();
+          console.log('[cron] Investment score update completed.');
+        } catch (err) {
+          console.error('[cron] Investment score update failed:', err);
+        }
+      });
+      cron.schedule('30 3 * * *', async () => {
+        try {
+          console.log('[cron] Checking price alerts...');
+          const alertSvc = AlertService.getInstance();
+          const { checked, triggered } = await alertSvc.checkAlerts();
+          console.log(`[cron] Alert check done: ${checked} checked, ${triggered} triggered.`);
+        } catch (err) {
+          console.error('[cron] Alert check failed:', err);
+        }
+      });
+      console.log('Daily cron jobs scheduled: ingest@02:00, scoring@03:00, alerts@03:30');
     }
 
     // Graceful shutdown

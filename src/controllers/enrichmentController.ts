@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { CardModel } from '../models';
 import { TCGCSVService, PythonService } from '../services';
+import { QueueService } from '../services/QueueService';
+import { EDHRECService } from '../services/EDHRECService';
 
 export class EnrichmentController {
   private tcg = TCGCSVService.getInstance();
@@ -62,7 +64,8 @@ export class EnrichmentController {
   /**
    * POST /api/enrich/edhrec
    * Body: { names: string[] }
-   * Runs Python advanced_processor and stores output to CardModel.edhrec
+   * If Azure queue is configured, dispatches async enrichment jobs.
+   * Falls back to Node-native EDHRECService, then Python subprocess.
    */
   public async enrichEDHREC(req: Request, res: Response): Promise<void> {
     try {
@@ -72,21 +75,42 @@ export class EnrichmentController {
         return;
       }
 
+      const queue = QueueService.getInstance();
+      const edhrec = EDHRECService.getInstance();
+
+      // If Azure queue is available, dispatch async and return early
+      const queued: string[] = [];
+      for (const name of names) {
+        const dispatched = await queue.enqueueEnrichment(name);
+        if (dispatched) queued.push(name);
+      }
+      if (queued.length > 0) {
+        res.json({ success: true, queued: queued.length, message: 'Enrichment jobs dispatched to Azure queue.' });
+        return;
+      }
+
+      // Sync fallback: Node-native EDHREC first
       const cards = await CardModel.find({ name: { $in: names } }, { _id: 1, name: 1, scryfallId: 1 }).lean();
       let updated = 0;
 
       for (const card of cards) {
         try {
-          const result = await this.python.executeScript({ card_name: card.name }, { scriptName: 'advanced_processor.py', timeout: 60000 });
-          if (result.success && result.output) {
-            await CardModel.updateOne({ _id: card._id }, {
-              $set: { edhrec: result.output },
-              $currentDate: { lastUpdated: true }
-            });
-            updated++;
+          await edhrec.enrichCard(card.name);
+          updated++;
+        } catch {
+          // Fall back to Python if EDHREC service fails
+          try {
+            const result = await this.python.executeScript({ card_name: card.name }, { scriptName: 'advanced_processor.py', timeout: 60000 });
+            if (result.success && result.output) {
+              await CardModel.updateOne({ _id: card._id }, {
+                $set: { edhrec: result.output },
+                $currentDate: { lastUpdated: true }
+              });
+              updated++;
+            }
+          } catch {
+            // continue
           }
-        } catch (e) {
-          // continue
         }
       }
 

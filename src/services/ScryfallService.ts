@@ -1,6 +1,7 @@
 import axios from 'axios';
-import { ScryfallCardModel, IScryfallCard, CardModel } from '../models';
+import { CardModel, ICard } from '../models';
 import { DatabaseAdapter } from '../adapters/database';
+import { CacheService } from './CacheService';
 
 export interface ScryfallSearchResult {
   object: string;
@@ -23,28 +24,24 @@ export class ScryfallService {
     return ScryfallService.instance;
   }
 
-  /**
-   * Search Scryfall cards using their full-text search syntax
-   */
   public async searchCards(query: string, page: number = 1): Promise<ScryfallSearchResult> {
     const url = `${this.baseUrl}/cards/search?q=${encodeURIComponent(query)}${page > 1 ? `&page=${page}` : ''}`;
     const { data } = await axios.get(url, { timeout: 15000 });
     return data as ScryfallSearchResult;
   }
 
-  /**
-   * Fetch a single card by exact name
-   */
   public async getCardByName(name: string): Promise<any> {
+    const cache = CacheService.getInstance();
+    const cacheKey = `scryfall:card:${name}`;
+    const cached = await cache.get<any>(cacheKey);
+    if (cached) return cached;
+
     const url = `${this.baseUrl}/cards/named?exact=${encodeURIComponent(name)}`;
     const { data } = await axios.get(url, { timeout: 15000 });
+    await cache.set(cacheKey, data, 86400); // 24h TTL
     return data;
   }
 
-  /**
-   * Ingest many cards by paging Scryfall search (fallback to avoid huge bulk file streaming).
-   * This will become the daily sync job. Use q='*' and iterate pages until limit.
-   */
   public async ingestAllCards(limit: number = 1000): Promise<{ saved: number }> {
     let page = 1;
     let totalSaved = 0;
@@ -70,61 +67,21 @@ export class ScryfallService {
     return { saved: totalSaved };
   }
 
-  /**
-   * Persist Scryfall cards into MongoDB (upsert by scryfallId)
-   */
-  public async saveCards(cards: any[]): Promise<IScryfallCard[]> {
+  public async saveCards(cards: any[]): Promise<ICard[]> {
     const db = DatabaseAdapter.getInstance();
     if (!db.getConnectionStatus()) {
-      console.log('Database not connected; skipping save. Returning mapped cards without persistence.');
-      // Return mapped objects (not saved) to allow UI to continue
-      return cards.map((c) => this.mapToDoc(c) as unknown as IScryfallCard);
+      return cards.map((c) => this.mapToUnifiedDoc(c) as unknown as ICard);
     }
-    const saved: IScryfallCard[] = [];
+    const saved: ICard[] = [];
     for (const c of cards) {
-      const doc = await ScryfallCardModel.findOneAndUpdate(
+      const doc = await CardModel.findOneAndUpdate(
         { scryfallId: c.id },
-        this.mapToDoc(c),
+        this.mapToUnifiedDoc(c),
         { upsert: true, new: true }
       );
       if (doc) saved.push(doc);
-
-      // Upsert into canonical Card model
-      const base = this.mapToUnifiedDoc(c);
-      await CardModel.findOneAndUpdate({ scryfallId: c.id }, base, { upsert: true, new: true });
     }
     return saved;
-  }
-
-  /**
-   * Map raw Scryfall card to our DB schema
-   */
-  private mapToDoc(card: any) {
-    return {
-      scryfallId: card.id,
-      name: card.name,
-  setCode: card.set,
-      setName: card.set_name,
-      collectorNumber: card.collector_number,
-      layout: card.layout,
-      manaCost: card.mana_cost,
-      cmc: card.cmc,
-      typeLine: card.type_line,
-      oracleText: card.oracle_text,
-      colors: card.colors,
-      colorIdentity: card.color_identity,
-      legalities: card.legalities,
-      imageUris: card.image_uris,
-      prices: card.prices,
-      tcgplayerId: card.tcgplayer_id,
-      rarity: card.rarity,
-      usd: card.prices?.usd,
-      usdFoil: card.prices?.usd_foil,
-      eur: card.prices?.eur,
-      tix: card.prices?.tix,
-      raw: card,
-      lastUpdated: new Date()
-    };
   }
 
   private mapToUnifiedDoc(card: any) {
