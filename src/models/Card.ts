@@ -1,8 +1,23 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
-// Canonical card document keyed by Scryfall id; other providers augment via nested fields
+export interface IPriceSnapshot {
+  date: Date;
+  usd?: number;
+  usdFoil?: number;
+  market?: number;
+  source: 'scryfall' | 'tcgplayer' | 'manapool';
+}
+
+export interface IEDHRECData {
+  commanderRank?: number;
+  totalDecks?: number;
+  combos?: any[];
+  recommendations?: Record<string, any[]>;
+  lastFetched?: Date;
+}
+
 export interface ICard extends Document {
-  scryfallId: string;          // Primary key
+  scryfallId: string;
   name: string;
   setCode?: string;
   setName?: string;
@@ -14,12 +29,11 @@ export interface ICard extends Document {
   imageUris?: Record<string, string>;
   prices?: Record<string, string | null>;
 
-  // Foreign keys/links
   tcgplayerId?: number;
 
   // Provider data
-  scryfall?: any;              // raw Scryfall
-  edhrec?: any;                // advanced_processor output excerpt
+  scryfall?: any;
+  edhrec?: IEDHRECData;
   tcg?: {
     currentPrice?: {
       usd?: number; usdFoil?: number; market?: number; low?: number; mid?: number; high?: number;
@@ -28,8 +42,31 @@ export interface ICard extends Document {
     productIds?: number[];
   };
 
+  // Price history snapshots across all providers
+  priceHistory?: IPriceSnapshot[];
+
+  // Investment scoring
+  investmentScore?: number;
+  investmentSignals?: string[];
+
   lastUpdated: Date;
 }
+
+const priceSnapshotSchema = new Schema<IPriceSnapshot>({
+  date: { type: Date, required: true },
+  usd: Number,
+  usdFoil: Number,
+  market: Number,
+  source: { type: String, enum: ['scryfall', 'tcgplayer', 'manapool'], required: true }
+}, { _id: false });
+
+const edhrecSchema = new Schema<IEDHRECData>({
+  commanderRank: Number,
+  totalDecks: Number,
+  combos: [Schema.Types.Mixed],
+  recommendations: Schema.Types.Mixed,
+  lastFetched: Date
+}, { _id: false });
 
 const cardSchema = new Schema<ICard>({
   scryfallId: { type: String, required: true, unique: true, index: true },
@@ -43,10 +80,13 @@ const cardSchema = new Schema<ICard>({
   rarity: String,
   imageUris: Schema.Types.Mixed,
   prices: Schema.Types.Mixed,
-  tcgplayerId: Number,
+  tcgplayerId: { type: Number, index: true },
   scryfall: Schema.Types.Mixed,
-  edhrec: Schema.Types.Mixed,
+  edhrec: edhrecSchema,
   tcg: Schema.Types.Mixed,
+  priceHistory: [priceSnapshotSchema],
+  investmentScore: { type: Number, index: true },
+  investmentSignals: [String],
   lastUpdated: { type: Date, default: Date.now }
 }, {
   timestamps: true,
@@ -55,5 +95,6 @@ const cardSchema = new Schema<ICard>({
 
 cardSchema.index({ name: 'text', setName: 'text', typeLine: 'text', oracleText: 'text' });
 cardSchema.index({ setCode: 1, collectorNumber: 1 });
+cardSchema.index({ investmentScore: -1 });
 
 export const CardModel = mongoose.model<ICard>('Card', cardSchema);

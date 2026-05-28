@@ -1,15 +1,16 @@
 import axios from 'axios';
 import csv from 'csv-parser';
 import { Readable } from 'stream';
-import { 
-  TCGCategoryModel, 
-  TCGGroupModel, 
-  TCGProductModel, 
+import {
+  TCGCategoryModel,
+  TCGGroupModel,
+  TCGProductModel,
   TCGPriceModel,
   ITCGCategory,
   ITCGGroup,
   ITCGProduct,
-  ITCGPrice
+  ITCGPrice,
+  CardModel
 } from '../models';
 import { MTG_SETS, MTGSetsHelper, MTGSet } from '../data/mtgSets';
 
@@ -253,16 +254,31 @@ export class TCGCSVService {
             );
           }
 
-          // Save prices
+          // Save prices — upsert by (productId, date) to preserve history
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
           for (const price of prices) {
-            const priceDoc = {
-              ...price,
-              priceDate: new Date()
-            };
-            
-            // Remove existing prices for this product to avoid duplicates
-            await TCGPriceModel.deleteMany({ productId: price.productId });
-            await TCGPriceModel.create(priceDoc);
+            const priceDoc = { ...price, priceDate: today };
+            await TCGPriceModel.findOneAndUpdate(
+              { productId: price.productId, priceDate: today },
+              priceDoc,
+              { upsert: true, new: true }
+            );
+            // Append snapshot to the canonical Card model's priceHistory
+            if (price.marketPrice != null) {
+              await CardModel.updateOne(
+                { tcgplayerId: price.productId },
+                {
+                  $push: {
+                    priceHistory: {
+                      date: today,
+                      market: price.marketPrice,
+                      source: 'tcgplayer'
+                    }
+                  }
+                }
+              );
+            }
           }
 
           console.log(`Completed ${set.name}: ${products.length} products, ${prices.length} prices`);

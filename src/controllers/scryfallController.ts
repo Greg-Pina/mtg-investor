@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { ScryfallService } from '../services/ScryfallService';
-import { ScryfallCardModel } from '../models';
+import { CardModel } from '../models';
 
 export class ScryfallController {
   private scryfall: ScryfallService;
@@ -9,10 +9,7 @@ export class ScryfallController {
     this.scryfall = ScryfallService.getInstance();
   }
 
-  /**
-   * GET /api/scryfall/search?q=...
-   * Optional: page
-   */
+  /** GET /api/scryfall/search?q=...&page=... */
   public async search(req: Request, res: Response): Promise<void> {
     try {
       const { q, page } = req.query;
@@ -29,11 +26,7 @@ export class ScryfallController {
     }
   }
 
-  /**
-   * POST /api/scryfall/save
-   * Body: { q: string, pages?: number }
-   * Searches Scryfall and stores the first N pages of results
-   */
+  /** POST /api/scryfall/save — Body: { q: string, pages?: number } */
   public async saveSearch(req: Request, res: Response): Promise<void> {
     try {
       const { q, pages = 1 } = req.body || {};
@@ -42,10 +35,9 @@ export class ScryfallController {
         return;
       }
       const pagesNum = Math.max(1, Math.min(5, Number(pages) || 1));
-  let allCards: any[] = [];
-  let nextPage: string | undefined;
+      let allCards: any[] = [];
+      let nextPage: string | undefined;
 
-      // Fetch first page via searchCards; follow next_page links up to pagesNum
       const first = await this.scryfall.searchCards(q, 1);
       allCards = allCards.concat(first.data || []);
       nextPage = first.has_more ? first.next_page : undefined;
@@ -56,9 +48,7 @@ export class ScryfallController {
         const payload = resp.data;
         allCards = allCards.concat(payload?.data || []);
         fetched++;
-        // naive: stop if no more; better to check has_more but nextPage requests already encode it
-        // We can't easily get next next_page without full object; keep single page follow for simplicity
-        nextPage = undefined;
+        nextPage = payload?.has_more ? payload?.next_page : undefined;
       }
 
       const saved = await this.scryfall.saveCards(allCards);
@@ -69,15 +59,24 @@ export class ScryfallController {
     }
   }
 
-  /**
-   * GET /api/scryfall/cards
-   * Query: q (text search), setCode, rarity, limit, page
-   */
+  /** POST /api/scryfall/ingest — Body: { limit?: number } */
+  public async ingest(req: Request, res: Response): Promise<void> {
+    try {
+      const { limit = 500 } = req.body || {};
+      const result = await this.scryfall.ingestAllCards(Math.min(5000, Number(limit) || 500));
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error('Scryfall ingest error:', err);
+      res.status(500).json({ success: false, error: err?.message || 'ingest-failed' });
+    }
+  }
+
+  /** GET /api/scryfall/cards?q=...&setCode=...&rarity=...&page=...&limit=... */
   public async querySaved(req: Request, res: Response): Promise<void> {
     try {
       const { q, setCode, rarity, page = '1', limit = '20' } = req.query;
       const pageNum = parseInt(page as string) || 1;
-      const limitNum = parseInt(limit as string) || 20;
+      const limitNum = Math.min(100, parseInt(limit as string) || 20);
       const skip = (pageNum - 1) * limitNum;
 
       const filter: any = {};
@@ -86,12 +85,12 @@ export class ScryfallController {
       if (rarity && typeof rarity === 'string') filter.rarity = rarity;
 
       const [cards, total] = await Promise.all([
-        ScryfallCardModel.find(filter)
+        CardModel.find(filter)
           .sort(q ? { score: { $meta: 'textScore' } } : { updatedAt: -1 })
           .skip(skip)
           .limit(limitNum)
           .lean(),
-        ScryfallCardModel.countDocuments(filter)
+        CardModel.countDocuments(filter)
       ]);
 
       res.status(200).json({
