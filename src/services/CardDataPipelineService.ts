@@ -1,55 +1,75 @@
 import { CardModel } from '../models';
-import { ManaPoolProvider } from './providers/ManaPoolProvider';
-import { TCGPlayerProvider } from './providers/TCGPlayerProvider';
-import { TOAMagicProvider } from './providers/TOAMagicProvider';
-import { CardQuery, IFinancialDataProvider, ProviderError, ProviderPricePoint } from './providers/types';
-
-export interface EnrichmentResult {
-  scanned: number;
-  updated: number;
-  providerFailures: ProviderError[];
-}
+import { EnrichmentController } from '../controllers';
+import { normalizeFinancialSnapshot } from '../graphql/normalization';
+import { CardFilterInput, CardRelationshipCluster, FinancialSnapshot } from '../graphql/types';
 
 export class CardDataPipelineService {
-  private providers: IFinancialDataProvider[];
+  private static instance: CardDataPipelineService;
+  private readonly enrichmentController = new EnrichmentController();
 
-  constructor(providers?: IFinancialDataProvider[]) {
-    this.providers = providers ?? [new TCGPlayerProvider(), new ManaPoolProvider(), new TOAMagicProvider()];
+  public static getInstance(): CardDataPipelineService {
+    if (!CardDataPipelineService.instance) {
+      CardDataPipelineService.instance = new CardDataPipelineService();
+    }
+    return CardDataPipelineService.instance;
   }
 
-  async enrichCardFinancials(names: string[], limit = 50): Promise<EnrichmentResult> {
-    const cards = await CardModel.find({ name: { $in: names } }, { _id: 1, name: 1 }).limit(limit).lean();
-    const providerFailures: ProviderError[] = [];
-    let updated = 0;
+  public async getCards(filter: CardFilterInput) {
+    const page = Math.max(1, Number(filter.page ?? 1));
+    const limit = Math.min(100, Math.max(1, Number(filter.limit ?? 20)));
+    const skip = (page - 1) * limit;
 
-    for (const card of cards) {
-      const query: CardQuery = { cardName: card.name };
-      const settled = await Promise.allSettled(this.providers.map(p => p.fetchPrices(query)));
+    const query: any = {};
+    if (filter.q) query.$text = { $search: filter.q };
+    if (filter.setCode) query.setCode = filter.setCode.toLowerCase();
+    if (filter.rarity) query.rarity = filter.rarity;
 
-      const mergedPoints: ProviderPricePoint[] = [];
-      for (const res of settled) {
-        if (res.status === 'fulfilled') {
-          if (res.value.ok) mergedPoints.push(...res.value.data);
-          else providerFailures.push(res.value.error);
-        } else {
-          providerFailures.push({
-            provider: 'unknown',
-            code: 'UNKNOWN',
-            message: res.reason instanceof Error ? res.reason.message : 'Uncaught provider failure',
-            cause: res.reason
-          });
-        }
-      }
+    const [cards, total] = await Promise.all([
+      CardModel.find(query)
+        .sort(filter.q ? { score: { $meta: 'textScore' } } : { updatedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      CardModel.countDocuments(query)
+    ]);
 
-      if (mergedPoints.length > 0) {
-        await CardModel.updateOne(
-          { _id: card._id },
-          { $set: { 'financial.providers': mergedPoints }, $currentDate: { lastUpdated: true } }
-        );
-        updated++;
-      }
-    }
+    return { cards, total, page, limit };
+  }
 
-    return { scanned: cards.length, updated, providerFailures };
+  public async getCard(name: string) {
+    return CardModel.findOne({ name: new RegExp(`^${name}$`, 'i') }).lean();
+  }
+
+  public getFinancialSnapshot(card: any): FinancialSnapshot {
+    return normalizeFinancialSnapshot(card);
+  }
+
+  public async getClusters(limitPerCluster: number = 10): Promise<CardRelationshipCluster[]> {
+    const pipeline: any[] = [
+      { $match: { setCode: { $exists: true, $ne: null } } },
+      { $group: { _id: '$setCode', cardCount: { $sum: 1 }, cards: { $push: '$$ROOT' } } },
+      { $sort: { cardCount: -1 as const } },
+      { $limit: 20 }
+    ];
+    const groups = await CardModel.aggregate(pipeline);
+    return groups.map((group: any) => ({
+      key: group._id,
+      label: `Set ${String(group._id).toUpperCase()}`,
+      cardCount: group.cardCount,
+      cards: group.cards.slice(0, limitPerCluster)
+    }));
+  }
+
+  public async enrichCard(name: string): Promise<boolean> {
+    const req: any = { body: { names: [name] } };
+    let success = false;
+    const res: any = {
+      json(payload: any) {
+        success = !!payload?.success;
+      },
+      status() { return this; }
+    };
+    await this.enrichmentController.enrichEDHREC(req, res);
+    return success;
   }
 }
