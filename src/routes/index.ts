@@ -6,6 +6,7 @@ import scryfall from "./scryfall";
 import enrich from "./enrich";
 import watchlist from "./watchlist";
 import auth from "./auth";
+import graphql from './graphql';
 import { helloController } from "../controllers/helloController";
 
 const router = Router();
@@ -17,6 +18,7 @@ router.use("/scryfall", scryfall);
 router.use("/enrich", enrich);
 router.use("/watchlist", watchlist);
 router.use("/auth", auth);
+router.use('/graphql', graphql);
 
 router.get("/hello", helloController);
 
