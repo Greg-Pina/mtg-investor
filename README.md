@@ -1,299 +1,239 @@
-# MTG Investor - TypeScript Express App with Python Integration
+# MTG Investor
 
-A robust TypeScript Express application with MongoDB integration and Python module support for advanced Magic: The Gathering card data processing and investment analysis.
+A TypeScript/Express API for tracking, scoring, and alerting on Magic: The Gathering card investment opportunities. Pulls card data from Scryfall and price data from TCGPlayer, ManaPool, and TOA Magic — then applies a weighted investment scoring model against EDHREC demand signals.
 
 ## Features
 
-- **TypeScript Express Server**: Modern Express.js application with TypeScript
-- **MongoDB Integration**: Full CRUD operations with Mongoose ODM
-- **Python Module Integration**: Execute Python scripts from Node.js with data exchange
-- **MTG Card Data Processing**: Integration with EDHREC.com via pyedhrec library
-- **Investment Analysis**: Automated analysis of MTG card investment potential
-- **JSON Validation**: Robust JSON parsing and validation middleware
-- **Error Handling**: Comprehensive error handling and logging
-- **Environment Configuration**: Configurable via environment variables
+- **Investment Scoring** — weighted model across EDHREC inclusion rates, price trend signals, and set data
+- **Multi-provider Pricing** — TCGPlayer, ManaPool, and TOA Magic with lazy init and graceful fallback
+- **Scryfall Integration** — live search + bulk ingest with rate limiting (10 req/s)
+- **GraphQL API** — typed schema with card search, filtering, clustering, and financial snapshots
+- **Watchlist** — per-user watchlists with target prices and daily alert checks
+- **JWT Auth** — register/login/refresh token flow with bcrypt password hashing
+- **Redis Cache** — optional ioredis-backed cache; gracefully disabled if `REDIS_URL` is absent
+- **Swagger Docs** — OpenAPI spec served at `/api/docs`
+- **Azure Functions** — serverless functions for card enrichment, investment scoring, Scryfall ingest, and alert checks
+- **Winston Logging** — structured logs with configurable level
 
 ## Project Structure
 
 ```
 src/
-├── adapters/          # External service adapters (database, etc.)
-├── controllers/       # Request handlers and business logic
-├── middleware/        # Express middleware functions
-├── models/           # Database models and schemas
-├── routes/           # Express route definitions
-├── services/         # Business logic services
-└── app.ts            # Express app configuration
+├── __tests__/           # Jest test suites
+├── config/              # Env validation, Swagger setup
+├── controllers/         # Route handlers
+├── graphql/             # Schema, resolvers, types, normalization
+├── middleware/          # JWT auth, rate limiting, JSON parsing
+├── models/              # Mongoose models (Card, User, Watchlist, Alert)
+├── routes/              # Express routers
+├── services/
+│   ├── providers/       # TCGPlayer, ManaPool, TOA Magic HTTP clients
+│   ├── AlertService.ts
+│   ├── CacheService.ts
+│   ├── CardDataPipelineService.ts
+│   ├── EDHRECService.ts
+│   ├── InvestmentScoringService.ts
+│   ├── ScryfallService.ts
+│   └── TCGCSVService.ts
+└── utils/               # Winston logger
 
-python/               # Python scripts for processing
-├── advanced_processor.py  # MTG card data processor
-└── requirements.txt       # Python dependencies
-configs/              # Configuration files
+azure-functions/
+└── src/functions/       # alertCheck, enrichCard, investmentScoring, scryfallIngest
+
+infra/
+└── main.bicep           # Azure infrastructure as code
 ```
+
+## Prerequisites
+
+- Node.js 18+
+- MongoDB (local or Atlas)
+- Redis (optional — caching disabled if not set)
 
 ## Installation
 
-1. Install Node.js dependencies:
 ```bash
 npm install
 ```
 
-2. Ensure Python 3 is installed and available:
-```bash
-python3 --version
-```
-
-3. Install Python dependencies:
-```bash
-# Install pip if needed (Ubuntu/Debian)
-sudo apt install python3-pip
-
-# Install MTG card data library
-pip3 install pyedhrec
-```
-
-4. Configure environment variables in `configs/.env`:
-```bash
-PORT=3000
-MONGODB_URI=mongodb://localhost:27017/mtg-investor
-PYTHON_PATH=python3
-PYTHON_SCRIPT_TIMEOUT=30000
-NODE_ENV=development
-```
-
-5. Start MongoDB (if running locally):
-```bash
-# Using Docker
-docker run -d -p 27017:27017 --name mongodb mongo:latest
-
-# Or using installed MongoDB
-mongod
-```
-
-## Usage
-
-### Development Mode
-```bash
-npm run dev
-```
-
-### Production Build
-```bash
-npm run build
-npm start
-```
-
-## API Endpoints
-
-### MTG Card Data Processing
-- `POST /api/mtg/process` - Process MTG card data from EDHREC
-- `GET /api/mtg/card/:name` - Get specific card data by name
-- `GET /api/mtg/search` - Search cards with filters (query, isCommander, hasCombos)
-- `GET /api/mtg/investment` - Get cards with investment potential
-- `DELETE /api/mtg/card/:name` - Delete card data
-
-### General Data Processing
-- `POST /api/data/process` - Process JSON data with optional Python processing
-- `GET /api/data/processed` - Get all processed data (with pagination)
-- `GET /api/data/processed/:id` - Get specific processed data by ID
-- `DELETE /api/data/processed/:id` - Delete processed data by ID
-
-### Health & Status
-- `GET /api/health` - Health check endpoint
-- `GET /api/hello` - Simple hello world endpoint
-
-## API Usage Examples
-
-### Process Data with Python Script
+Copy the example env file and fill in your values:
 
 ```bash
-curl -X POST http://localhost:3000/api/data/process \
-  -H "Content-Type: application/json" \
-  -d '{
-    "data": {
-      "numbers": [1, 2, 3, 4, 5],
-      "text": "Hello world, this is a test message",
-      "value": 42
-    },
-    "pythonScript": "example_processor.py",
-    "options": {
-      "timeout": 10000,
-      "source": "api_test"
-    }
-  }'
-```
-
-### Process Data Without Python
-
-```bash
-curl -X POST http://localhost:3000/api/data/process \
-  -H "Content-Type: application/json" \
-  -d '{
-    "data": {
-      "user": "john_doe",
-      "action": "login",
-      "timestamp": "2024-01-01T12:00:00Z"
-    }
-  }'
-```
-
-### Get Processed Data
-
-```bash
-# Get all processed data
-curl http://localhost:3000/api/data/processed
-
-# Get with pagination and filtering
-curl "http://localhost:3000/api/data/processed?page=1&limit=5&status=success"
-
-# Get specific item
-curl http://localhost:3000/api/data/processed/{id}
-```
-
-## Python Integration
-
-### Available Python Scripts
-
-1. **example_processor.py** - Basic data processing with statistics
-2. **advanced_processor.py** - Advanced analysis with text processing and time series
-
-### Creating Custom Python Scripts
-
-Python scripts should:
-1. Accept JSON data as a command line argument
-2. Return results as JSON to stdout
-3. Handle errors gracefully
-
-Example Python script structure:
-
-```python
-#!/usr/bin/env python3
-import sys
-import json
-
-def process_data(data):
-    # Your processing logic here
-    result = {
-        'processed': True,
-        'input': data,
-        'output': 'your_processed_data'
-    }
-    return result
-
-def main():
-    try:
-        json_input = sys.argv[1]
-        data = json.loads(json_input)
-        result = process_data(data)
-        print(json.dumps(result))
-    except Exception as e:
-        error_result = {'error': str(e)}
-        print(json.dumps(error_result))
-        sys.exit(1)
-
-if __name__ == '__main__':
-    main()
-```
-
-## Database Schema
-
-### ProcessedData Model
-
-```typescript
-{
-  originalData: Record<string, any>,     // Input data
-  processedData: Record<string, any>,    // Processed result
-  pythonOutput?: any,                    // Python script output
-  processedAt: Date,                     // Processing timestamp
-  status: 'success' | 'error' | 'processing',
-  errorMessage?: string,                 // Error details if failed
-  metadata?: {
-    source?: string,                     // Data source identifier
-    processingTime?: number,             // Processing duration (ms)
-    pythonScript?: string                // Script name used
-  }
-}
-```
-
-## Error Handling
-
-The application includes comprehensive error handling:
-
-- **JSON Validation**: Invalid JSON structure returns 400 with details
-- **Python Execution**: Script errors are captured and stored
-- **Database Errors**: Connection and operation errors are handled
-- **Timeout Handling**: Python scripts timeout after configured duration
-- **Request Size Limits**: Large payloads are rejected (2MB default)
-
-## Development
-
-### Adding New Routes
-1. Create controller in `src/controllers/`
-2. Add route definition in `src/routes/`
-3. Update main routes index
-
-### Adding New Python Scripts
-1. Create script in `python/` directory
-2. Make executable: `chmod +x python/your_script.py`
-3. Follow the JSON input/output pattern
-
-### Testing
-```bash
-# Run linting
-npm run lint
-
-# Format code
-npm run format
-
-# Run tests (when available)
-npm test
+cp configs/.env.example configs/.env
 ```
 
 ## Configuration
 
-Environment variables:
+| Variable | Required | Description |
+|---|---|---|
+| `PORT` | No | Server port (default: `3000`) |
+| `NODE_ENV` | No | `development` / `production` |
+| `LOG_LEVEL` | No | `info`, `debug`, `warn`, `error` |
+| `MONGODB_URI` | **Yes** | MongoDB connection string |
+| `JWT_SECRET` | **Yes** | Secret for access tokens |
+| `JWT_REFRESH_SECRET` | **Yes** | Secret for refresh tokens |
+| `REDIS_URL` | No | Redis connection string — caching disabled if absent |
+| `TCGPLAYER_API_KEY` | No | Falls back to CSV ingest |
+| `MANAPOOL_AUTH_TOKEN` | No | Optional price provider |
+| `TOA_MAGIC_API_KEY` | No | Optional price provider |
+| `SENDGRID_API_KEY` | No | Required for email price alerts |
+| `ALERT_FROM_EMAIL` | No | Sender address for alerts |
+| `SCHEDULE_INGEST` | No | Set `true` to enable cron-based Scryfall ingest |
 
-- `PORT` - Server port (default: 3000)
-- `MONGODB_URI` - MongoDB connection string
-- `PYTHON_PATH` - Python executable path (default: python3)
-- `PYTHON_SCRIPT_TIMEOUT` - Script timeout in ms (default: 30000)
-- `NODE_ENV` - Environment (development/production)
-- `LOG_LEVEL` - Logging level (info, debug, warn, error)
+## Running
 
-## Dependencies
+```bash
+# Development (hot reload)
+npm run dev
 
-### Main Dependencies
-- **express** - Web framework
-- **mongoose** - MongoDB ODM
-- **python-shell** - Python integration
-- **ajv** - JSON schema validation
-- **dotenv** - Environment configuration
+# Production
+npm run build
+npm start
+```
 
-### Development Dependencies
-- **typescript** - TypeScript compiler
-- **ts-node-dev** - Development server
-- **eslint** - Code linting
-- **prettier** - Code formatting
+Start MongoDB locally with Docker if needed:
+
+```bash
+docker run -d -p 27017:27017 --name mongo mongo:latest
+```
+
+## REST API
+
+### Auth — `/api/auth`
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/register` | Create account — body: `{ email, password }` |
+| `POST` | `/login` | Get access + refresh tokens |
+| `POST` | `/refresh` | Exchange refresh token for new access token |
+
+Protected routes require `Authorization: Bearer <token>`.
+
+### Scryfall — `/api/scryfall`
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/search?q=&page=` | Live Scryfall query (rate limited at 10 req/s) |
+| `POST` | `/ingest` | Bulk ingest — body: `{ q, pages? }` — saves to MongoDB |
+| `GET` | `/cards?q=&setCode=&rarity=&page=&limit=` | Query saved cards |
+
+### Watchlist — `/api/watchlist` *(auth required)*
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Get your watchlist |
+| `POST` | `/` | Add card — body: `{ cardName, targetPrice? }` |
+| `DELETE` | `/:id` | Remove entry |
+
+### MTG Cards — `/api/mtg`
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/process` | Enrich card data from EDHREC |
+| `GET` | `/card/:name` | Get card by name |
+| `GET` | `/search?q=&isCommander=&hasCombos=` | Search cards |
+| `GET` | `/investment` | Cards ranked by investment score |
+| `DELETE` | `/card/:name` | Delete card |
+
+### Enrichment — `/api/enrich`
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/edhrec` | Enrich cards with EDHREC inclusion data |
+| `POST` | `/financials` | Pull price data from configured providers |
+
+### Health
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/health` | Service health check |
+| `GET` | `/api/docs` | Swagger/OpenAPI UI |
+
+## GraphQL API
+
+Available at `POST /api/graphql`.
+
+```graphql
+# Search and filter cards
+query {
+  cards(filter: { q: "sol ring", setCode: "cmm", rarity: "rare", page: 1, limit: 20 }) {
+    cards {
+      name
+      setCode
+      rarity
+      investmentScore
+      financialSnapshot {
+        usd
+        usdFoil
+        priceChange30d
+      }
+    }
+    total
+    page
+    limit
+  }
+}
+
+# Get a single card with full details
+query {
+  card(name: "Sol Ring") {
+    name
+    investmentScore
+    investmentSignals
+    financialSnapshot { usd usdFoil priceChange30d }
+  }
+}
+
+# Group cards by set
+query {
+  clusters(limitPerCluster: 5) {
+    key
+    label
+    cardCount
+    cards { name investmentScore }
+  }
+}
+```
+
+## Investment Scoring
+
+`InvestmentScoringService` produces a 0–100 score using weighted signals:
+
+| Signal | Weight |
+|---|---|
+| EDHREC inclusion rate | 40% |
+| 30-day price trend | 30% |
+| Price stability | 20% |
+| Set demand multiplier | 10% |
+
+Cards above a threshold are flagged with `investmentSignals` — an array of human-readable reasons (`"High EDHREC inclusion"`, `"Strong upward price trend"`, etc.).
+
+## Testing
+
+```bash
+npm test              # Run all tests
+npm run test:coverage # With coverage report
+```
+
+Test suites cover `InvestmentScoringService` (scoring logic) and `TCGCSVService.parsePrice` (CSV parsing edge cases).
+
+## Azure Deployment
+
+The `azure-functions/` directory contains four timer-triggered functions:
+
+| Function | Schedule | Description |
+|---|---|---|
+| `scryfallIngest` | Daily | Bulk-ingest Scryfall card catalog |
+| `enrichCard` | Daily | EDHREC enrichment for tracked cards |
+| `investmentScoring` | Daily | Recompute investment scores |
+| `alertCheck` | Daily | Check watchlist target prices and send alerts |
+
+Infrastructure is defined in `infra/main.bicep` (Azure Functions, Storage, Cosmos-compatible MongoDB). Deploy with the [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/):
+
+```bash
+azd up
+```
 
 ## License
 
-ISC License
-
----
-
-## New: Scryfall Integration and UI
-
-### Endpoints
-- `GET /api/scryfall/search?q=...&page=1` – Live query Scryfall API
-- `POST /api/scryfall/save` – Body `{ q: string, pages?: number }` saves results to MongoDB (if connected)
-- `GET /api/scryfall/cards?q=&setCode=&rarity=&page=&limit=` – Query saved Scryfall cards from MongoDB
-
-### UI
-Open http://localhost:3000/ to try a minimal UI:
-- Run a live search and preview results
-- Save results to your DB
-- Query saved cards and view a D3 histogram of USD prices
-
-Notes:
-- The `scryfall_cards` schema keeps a `raw` copy of the card object for flexibility while denormalizing common fields.
-- If MongoDB is not connected, the save endpoint will no-op and return mapped cards, so the UI remains usable.
+ISC
