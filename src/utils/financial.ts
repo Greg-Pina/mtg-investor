@@ -1,4 +1,4 @@
-import { FinancialSnapshot } from './types';
+import { FinancialSnapshot } from '../types/cards';
 
 function parsePrice(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;

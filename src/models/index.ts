@@ -1,6 +1,5 @@
 export { ProcessedDataModel, IProcessedData } from './ProcessedData';
-export { MTGCardModel, IMTGCard } from './MTGCard';
-export { 
+export {
   TCGCategoryModel, 
   TCGGroupModel, 
   TCGProductModel, 
