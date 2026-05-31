@@ -1,19 +1,34 @@
-# MTG Investor
+# Moronic MTG
 
-A TypeScript/Express API for tracking, scoring, and alerting on Magic: The Gathering card investment opportunities. Pulls card data from Scryfall and price data from TCGPlayer, ManaPool, and TOA Magic — then applies a weighted investment scoring model against EDHREC demand signals.
+A hybrid MTG collection middleware hub and investment dashboard. Bridges local scanning workflows (ManaBox, DragonShield, TCGPlayer) with EchoMTG as the cloud inventory backend, while layering Scryfall and EDHREC investment intelligence on top.
 
-## Features
+## What it does
 
-- **Investment Scoring** — weighted model across EDHREC inclusion rates, price trend signals, and set data
-- **Multi-provider Pricing** — TCGPlayer, ManaPool, and TOA Magic with lazy init and graceful fallback
-- **Scryfall Integration** — live search + bulk ingest with rate limiting (10 req/s)
-- **GraphQL API** — typed schema with card search, filtering, clustering, and financial snapshots
-- **Watchlist** — per-user watchlists with target prices and daily alert checks
-- **JWT Auth** — register/login/refresh token flow with bcrypt password hashing
-- **Redis Cache** — optional ioredis-backed cache; gracefully disabled if `REDIS_URL` is absent
-- **Swagger Docs** — OpenAPI spec served at `/api/docs`
-- **Azure Functions** — serverless functions for card enrichment, investment scoring, Scryfall ingest, and alert checks
-- **Winston Logging** — structured logs with configurable level
+- **Single source of truth** — import cards from any CSV source into one unified MongoDB collection
+- **EchoMTG sync** — bidirectional: pull your cloud inventory locally, push new cards back to EchoMTG
+- **Investment scoring** — all Scryfall cards scored; owned cards surfaced with priority
+- **Public storefront** — share listed cards with direct buy links to TCGPlayer and ManaPool
+- **Admin dashboard** — manage your full collection with inline editing and import tools
+
+---
+
+## Architecture
+
+MongoDB uses a bronze/silver/gold data model — all in one database, one connection:
+
+```
+Bronze (raw ingest)
+├── import_jobs        ← import session metadata and error logs
+└── (import_rows_raw)  ← raw rows retained for 30-day audit window (TTL index)
+
+Silver (normalized collection)
+└── collection_cards   ← unified personal inventory, deduplicated
+
+Gold (enriched & scored)
+├── cards              ← Scryfall data, EDHREC signals, investment scores
+├── watchlists         ← session-based price watchlists
+└── alerts             ← price threshold alerts
+```
 
 ## Project Structure
 
@@ -21,27 +36,45 @@ A TypeScript/Express API for tracking, scoring, and alerting on Magic: The Gathe
 src/
 ├── __tests__/           # Jest test suites
 ├── config/              # Env validation, Swagger setup
-├── controllers/         # Route handlers
-├── graphql/             # Schema, resolvers, types, normalization
-├── middleware/          # JWT auth, rate limiting, JSON parsing
-├── models/              # Mongoose models (Card, User, Watchlist, Alert)
-├── routes/              # Express routers
+├── controllers/
+│   ├── collectionController.ts   # Collection CRUD, import, portfolio, store
+│   └── enrichmentController.ts  # TCG + EDHREC enrichment
+├── graphql/             # Schema, resolvers, types
+├── middleware/          # JWT auth, rate limiting
+├── models/
+│   ├── Card.ts                   # Gold layer: Scryfall/EDHREC/investment data
+│   ├── CollectionCard.ts         # Silver layer: personal collection inventory
+│   └── ImportJob.ts              # Bronze layer: import session tracking
+├── routes/
+│   └── collection.ts             # All collection + import + store endpoints
 ├── services/
-│   ├── providers/       # TCGPlayer, ManaPool, TOA Magic HTTP clients
-│   ├── AlertService.ts
-│   ├── CacheService.ts
-│   ├── CardDataPipelineService.ts
-│   ├── EDHRECService.ts
+│   ├── importers/                # Source-agnostic CSV import pipeline
+│   │   ├── ICollectionImporter.ts
+│   │   ├── ManaBoxImporter.ts
+│   │   ├── DragonShieldImporter.ts
+│   │   ├── TCGPlayerCollectionImporter.ts
+│   │   ├── EchoMTGImporter.ts
+│   │   └── GenericImporter.ts    # Fallback: fuzzy header matching
+│   ├── providers/                # TCGPlayer, ManaPool, TOA Magic HTTP clients
+│   ├── CollectionImportService.ts  # Preview + streaming commit + SSE progress
+│   ├── EchoMTGService.ts           # Full EchoMTG API client
+│   ├── EDHRECService.ts            # JSON fast-path (json.edhrec.com)
 │   ├── InvestmentScoringService.ts
-│   ├── ScryfallService.ts
-│   └── TCGCSVService.ts
-└── utils/               # Winston logger
+│   └── ScryfallService.ts
+├── utils/
+│   ├── logger.ts
+│   └── marketplaceLinks.ts       # TCGPlayer + ManaPool URL builder
+
+public/
+├── index.html    # Main dashboard (5 tabs)
+├── store.html    # Public storefront
+└── admin.html    # Admin panel
+
+python/
+└── advanced_processor.py   # Deep EDHREC enrichment via pyedhrec (batch path)
 
 azure-functions/
-└── src/functions/       # alertCheck, enrichCard, investmentScoring, scryfallIngest
-
-infra/
-└── main.bicep           # Azure infrastructure as code
+└── src/functions/   # alertCheck, enrichCard, investmentScoring, scryfallIngest
 ```
 
 ## Prerequisites
@@ -49,6 +82,7 @@ infra/
 - Node.js 18+
 - MongoDB (local or Atlas)
 - Redis (optional — caching disabled if not set)
+- Python 3 + `pip install pyedhrec` (optional — for deep EDHREC batch enrichment)
 
 ## Installation
 
@@ -56,7 +90,7 @@ infra/
 npm install
 ```
 
-Copy the example env file and fill in your values:
+Copy and configure the environment file:
 
 ```bash
 cp configs/.env.example configs/.env
@@ -66,13 +100,16 @@ cp configs/.env.example configs/.env
 
 | Variable | Required | Description |
 |---|---|---|
-| `PORT` | No | Server port (default: `3000`) |
-| `NODE_ENV` | No | `development` / `production` |
-| `LOG_LEVEL` | No | `info`, `debug`, `warn`, `error` |
 | `MONGODB_URI` | **Yes** | MongoDB connection string |
 | `JWT_SECRET` | **Yes** | Secret for access tokens |
 | `JWT_REFRESH_SECRET` | **Yes** | Secret for refresh tokens |
+| `PORT` | No | Server port (default: `3000`) |
+| `NODE_ENV` | No | `development` / `production` |
+| `LOG_LEVEL` | No | `info`, `debug`, `warn`, `error` |
 | `REDIS_URL` | No | Redis connection string — caching disabled if absent |
+| `ECHO_MTG_TOKEN` | No | Static EchoMTG bearer token (takes priority over email/password) |
+| `ECHO_MTG_EMAIL` | No | EchoMTG email — used for auto token refresh |
+| `ECHO_MTG_PASSWORD` | No | EchoMTG password — used with email for auto token refresh |
 | `TCGPLAYER_API_KEY` | No | Falls back to CSV ingest |
 | `MANAPOOL_AUTH_TOKEN` | No | Optional price provider |
 | `TOA_MAGIC_API_KEY` | No | Optional price provider |
@@ -97,7 +134,95 @@ Start MongoDB locally with Docker if needed:
 docker run -d -p 27017:27017 --name mongo mongo:latest
 ```
 
-## REST API
+## Pages
+
+| URL | Description |
+|---|---|
+| `http://localhost:3000/` | Investment dashboard (5 tabs) |
+| `http://localhost:3000/store` | Public storefront — listed cards with marketplace buy links |
+| `http://localhost:3000/admin` | Admin panel — full collection management and import tools |
+
+## Collection API
+
+### Collection — `/api/collection`
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | List collection cards. Filter: `status`, `source`, `condition`, `isFoil`, `q`, `page`, `limit` |
+| `POST` | `/` | Manually add a card. Fires EchoMTG add if `emid` present |
+| `PATCH` | `/:id` | Update card (qty, status, condition, notes). Fires EchoMTG update. Setting `status: "Sold"` + `soldPrice` logs to EchoMTG earnings |
+| `DELETE` | `/:id` | Remove card. Fires EchoMTG delete |
+| `POST` | `/import/preview` | Dry-run CSV parse — returns source detection + counts, no writes |
+| `POST` | `/import` | Commit CSV import. Returns `jobId`. Bulk-syncs new cards to EchoMTG |
+| `GET` | `/import/progress/:jobId` | SSE stream of live import progress |
+| `GET` | `/import/history` | Last 10 import job records |
+| `POST` | `/sync/echo` | Pull full EchoMTG inventory → upsert locally (runs in background) |
+| `GET` | `/portfolio` | Aggregate value, investment signals for owned cards, top unowned opportunities |
+
+### Store — `/api/store`
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Cards where `status == "Listed for Sale"` with TCGPlayer + ManaPool URLs injected |
+
+## CSV Import
+
+The import pipeline auto-detects the source from CSV headers. Supported formats:
+
+| Source | Distinctive headers |
+|---|---|
+| ManaBox | `Scryfall ID`, `Set code`, `Purchase price` |
+| DragonShield | `Card Name`, `Finish`, `Folder Name` |
+| TCGPlayer (collection) | `Printing`, `Set Name`, `Number` |
+| EchoMTG CSV | `echo_id` / `echoid` / `emid` |
+| Generic (fallback) | Any CSV with `name`/`card`/`card_name` + `set`/`set_code` |
+
+**Import flow:**
+1. `POST /api/collection/import/preview` — parse only, returns row counts and a 10-row sample
+2. `POST /api/collection/import` — commit; streams progress via SSE; fires EchoMTG bulk sync after completion
+3. Duplicate cards have their quantities summed by default (configurable via `mergeStrategy: "replace"`)
+
+**Marketplace URL format:**
+- TCGPlayer: `https://www.tcgplayer.com/search?productLineName=magic&q={Name+SetCode}&view=grid`
+- ManaPool: `https://manapool.com/search?q={Name+#set:setcode}`
+
+## EchoMTG Integration
+
+EchoMTG is used as the cloud inventory backend. The local MongoDB collection is always authoritative; Echo is synced async and failures are logged without blocking.
+
+**Authentication:** Set `ECHO_MTG_TOKEN` for a static token, or `ECHO_MTG_EMAIL` + `ECHO_MTG_PASSWORD` for auto-refresh (24-hour token expiry). Echo integration degrades gracefully if credentials are absent.
+
+**Condition codes** — the full EchoMTG set is supported including graded cards:
+
+| Category | Codes |
+|---|---|
+| Standard | `NM`, `LP`, `MP`, `HP`, `D`, `ALT`, `ART`, `PRE`, `TS`, `SGN` |
+| BGS | `BGS`, `B10`, `B95` … `B7` |
+| PSA | `PSA`, `P10`, `P95` … `P7` |
+| CGC | `CGC`, `C10P`, `C10`, `C95` … `C7` |
+| PCG | `PCG`, `PC10`, `PC95` … `PC7` |
+
+## Investment Scoring
+
+`InvestmentScoringService` produces a 0–100 score using weighted signals:
+
+| Signal | Weight |
+|---|---|
+| EDHREC inclusion rate | 40% |
+| 30-day price trend | 30% |
+| Price stability | 20% |
+| Set demand multiplier | 10% |
+
+The `/api/collection/portfolio` endpoint cross-references your collection against all scored cards, annotating owned cards with `investmentScore`, `currentValue`, and `unrealizedGain`, while also returning the top 10 unowned high-score cards as `topOpportunities`.
+
+## EDHREC Enrichment
+
+Two paths:
+
+- **Fast path** (`EDHRECService`) — direct HTTP to `https://json.edhrec.com/pages`. Used for single-card real-time enrichment via `POST /api/enrich/edhrec`. Undocumented endpoint; may be subject to rate limits.
+- **Deep path** (`python/advanced_processor.py`) — uses `pyedhrec` library. Invoked as Python subprocess fallback and by Azure Functions for batch enrichment. Richer data including commander rank, deck counts, full recommendation matrix, and combos.
+
+## Existing REST API
 
 ### Auth — `/api/auth`
 
@@ -107,23 +232,13 @@ docker run -d -p 27017:27017 --name mongo mongo:latest
 | `POST` | `/login` | Get access + refresh tokens |
 | `POST` | `/refresh` | Exchange refresh token for new access token |
 
-Protected routes require `Authorization: Bearer <token>`.
-
 ### Scryfall — `/api/scryfall`
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/search?q=&page=` | Live Scryfall query (rate limited at 10 req/s) |
+| `GET` | `/search?q=&page=` | Live Scryfall query |
 | `POST` | `/ingest` | Bulk ingest — body: `{ q, pages? }` — saves to MongoDB |
 | `GET` | `/cards?q=&setCode=&rarity=&page=&limit=` | Query saved cards |
-
-### Watchlist — `/api/watchlist` *(auth required)*
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/` | Get your watchlist |
-| `POST` | `/` | Add card — body: `{ cardName, targetPrice? }` |
-| `DELETE` | `/:id` | Remove entry |
 
 ### MTG Cards — `/api/mtg`
 
@@ -139,8 +254,16 @@ Protected routes require `Authorization: Bearer <token>`.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/edhrec` | Enrich cards with EDHREC inclusion data |
+| `POST` | `/edhrec` | Enrich cards with EDHREC data — body: `{ names: string[] }` |
 | `POST` | `/financials` | Pull price data from configured providers |
+
+### Watchlist — `/api/watchlist` *(auth required)*
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Get your watchlist |
+| `POST` | `/` | Add card — body: `{ cardName, targetPrice? }` |
+| `DELETE` | `/:id` | Remove entry |
 
 ### Health
 
@@ -154,85 +277,31 @@ Protected routes require `Authorization: Bearer <token>`.
 Available at `POST /api/graphql`.
 
 ```graphql
-# Search and filter cards
 query {
   cards(filter: { q: "sol ring", setCode: "cmm", rarity: "rare", page: 1, limit: 20 }) {
     cards {
-      name
-      setCode
-      rarity
-      investmentScore
-      financialSnapshot {
-        usd
-        usdFoil
-        priceChange30d
-      }
+      name setCode rarity investmentScore
+      financialSnapshot { usd usdFoil priceChange30d }
     }
-    total
-    page
-    limit
-  }
-}
-
-# Get a single card with full details
-query {
-  card(name: "Sol Ring") {
-    name
-    investmentScore
-    investmentSignals
-    financialSnapshot { usd usdFoil priceChange30d }
-  }
-}
-
-# Group cards by set
-query {
-  clusters(limitPerCluster: 5) {
-    key
-    label
-    cardCount
-    cards { name investmentScore }
+    total page limit
   }
 }
 ```
-
-## Investment Scoring
-
-`InvestmentScoringService` produces a 0–100 score using weighted signals:
-
-| Signal | Weight |
-|---|---|
-| EDHREC inclusion rate | 40% |
-| 30-day price trend | 30% |
-| Price stability | 20% |
-| Set demand multiplier | 10% |
-
-Cards above a threshold are flagged with `investmentSignals` — an array of human-readable reasons (`"High EDHREC inclusion"`, `"Strong upward price trend"`, etc.).
 
 ## Testing
 
 ```bash
-npm test              # Run all tests
-npm run test:coverage # With coverage report
+npm test
+npm run test:coverage
 ```
 
-Test suites cover `InvestmentScoringService` (scoring logic) and `TCGCSVService.parsePrice` (CSV parsing edge cases).
-
 ## Azure Deployment
-
-The `azure-functions/` directory contains four timer-triggered functions:
-
-| Function | Schedule | Description |
-|---|---|---|
-| `scryfallIngest` | Daily | Bulk-ingest Scryfall card catalog |
-| `enrichCard` | Daily | EDHREC enrichment for tracked cards |
-| `investmentScoring` | Daily | Recompute investment scores |
-| `alertCheck` | Daily | Check watchlist target prices and send alerts |
-
-Infrastructure is defined in `infra/main.bicep` (Azure Functions, Storage, Cosmos-compatible MongoDB). Deploy with the [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/):
 
 ```bash
 azd up
 ```
+
+Azure Functions (`azure-functions/`): `scryfallIngest`, `enrichCard`, `investmentScoring`, `alertCheck` — all timer-triggered daily. Infrastructure in `infra/main.bicep`.
 
 ## License
 

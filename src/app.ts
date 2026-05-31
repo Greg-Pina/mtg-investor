@@ -48,8 +48,21 @@ export function createApp(): Application {
   const publicDir = path.join(__dirname, "../public");
   app.use(express.static(publicDir));
 
+  // Named page routes — serve HTML files from public/
+  app.get('/store', (_req, res) => res.sendFile(path.join(publicDir, 'store.html')));
+  app.get('/admin', (_req, res) => res.sendFile(path.join(publicDir, 'admin.html')));
+
   app.use((_req, res) => {
     res.status(404).json({ error: "Not found" });
+  });
+
+  // Multer file upload error handler
+  app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err instanceof Error && err.message === 'Only CSV files are accepted') {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    next(err);
   });
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
