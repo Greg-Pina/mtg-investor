@@ -6,14 +6,6 @@ export interface CardFilterInput {
   limit?: number;
 }
 
-export interface SyncScryfallInput {
-  limit?: number;
-}
-
-export interface EnrichCardInput {
-  name: string;
-}
-
 export interface FinancialSnapshot {
   usd?: number | null;
   usdFoil?: number | null;
@@ -31,8 +23,4 @@ export interface CardRelationshipCluster {
   label: string;
   cardCount: number;
   cards: any[];
-}
-
-export interface GraphQLContext {
-  requestId?: string;
 }

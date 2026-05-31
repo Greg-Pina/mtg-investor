@@ -1,11 +1,10 @@
 import { CardModel } from '../models';
-import { EnrichmentController } from '../controllers';
-import { normalizeFinancialSnapshot } from '../graphql/normalization';
-import { CardFilterInput, CardRelationshipCluster, FinancialSnapshot } from '../graphql/types';
+import { normalizeFinancialSnapshot } from '../utils/financial';
+import { CardFilterInput, CardRelationshipCluster, FinancialSnapshot } from '../types/cards';
+import { EDHRECService } from './EDHRECService';
 
 export class CardDataPipelineService {
   private static instance: CardDataPipelineService;
-  private readonly enrichmentController = new EnrichmentController();
 
   public static getInstance(): CardDataPipelineService {
     if (!CardDataPipelineService.instance) {
@@ -61,15 +60,11 @@ export class CardDataPipelineService {
   }
 
   public async enrichCard(name: string): Promise<boolean> {
-    const req: any = { body: { names: [name] } };
-    let success = false;
-    const res: any = {
-      json(payload: any) {
-        success = !!payload?.success;
-      },
-      status() { return this; }
-    };
-    await this.enrichmentController.enrichEDHREC(req, res);
-    return success;
+    try {
+      await EDHRECService.getInstance().enrichCard(name);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

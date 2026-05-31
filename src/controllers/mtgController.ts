@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { MTGCardModel, IMTGCard, TCGProductModel, TCGPriceModel } from '../models';
+import { CardModel, ICard } from '../models';
 import { PythonService, PythonExecutionResult, TCGCSVService } from '../services';
 import { ValidatedRequest } from '../middleware';
 
@@ -27,22 +27,15 @@ export class MTGController {
     this.tcgService = TCGCSVService.getInstance();
   }
 
-  /**
-   * Check if database is available
-   */
   private isDatabaseAvailable(): boolean {
     return !!process.env.MONGODB_URI && process.env.NODE_ENV !== 'development-no-db';
   }
 
-  /**
-   * Process MTG card data using the advanced processor
-   */
   public async processCardData(req: ValidatedRequest<MTGCardRequest>, res: Response): Promise<void> {
     try {
       const { cardName, cardNames, cards, forceUpdate, options } = req.validatedData!;
       const startTime = Date.now();
 
-      // Determine which cards to process
       const cardsToProcess: string[] = [];
       if (cardName) cardsToProcess.push(cardName);
       if (cardNames) cardsToProcess.push(...cardNames);
@@ -61,53 +54,41 @@ export class MTGController {
         return;
       }
 
-      // Check if cards already exist in database (unless force update)
-      const existingCards: IMTGCard[] = [];
+      const existingCards: ICard[] = [];
       if (!forceUpdate && this.isDatabaseAvailable()) {
-        const existing = await MTGCardModel.find({
-          cardName: { $in: cardsToProcess }
-        });
+        const existing = await CardModel.find({ name: { $in: cardsToProcess } });
         existingCards.push(...existing);
       }
 
-      // Determine which cards need to be fetched
-      const existingCardNames = existingCards.map(card => card.cardName);
+      const existingCardNames = existingCards.map(card => card.name);
       const cardsToFetch = cardsToProcess.filter(name => !existingCardNames.includes(name) || forceUpdate);
 
       let pythonResult: PythonExecutionResult | null = null;
-      const processedCards: IMTGCard[] = [...existingCards];
+      const processedCards: ICard[] = [...existingCards];
 
-      // Fetch new card data if needed
       if (cardsToFetch.length > 0) {
-        const pythonInput = cardsToFetch.length === 1 
+        const pythonInput = cardsToFetch.length === 1
           ? { card_name: cardsToFetch[0] }
           : { card_names: cardsToFetch };
 
         pythonResult = await this.pythonService.executeScript(pythonInput, {
           scriptName: 'advanced_processor.py',
-          timeout: options?.timeout || 60000 // 60 seconds for MTG data
+          timeout: options?.timeout || 60000
         });
 
         if (pythonResult.success && pythonResult.output) {
           if (this.isDatabaseAvailable()) {
             await this.saveCardData(pythonResult.output, cardsToFetch);
-            
-            // Fetch the newly saved cards
-            const newCards = await MTGCardModel.find({
-              cardName: { $in: cardsToFetch }
-            });
+
+            const newCards = await CardModel.find({ name: { $in: cardsToFetch } });
             processedCards.push(...newCards);
-          } 
-          
-          // Always include raw Python output for immediate access
+          }
+
           if (!processedCards.length && pythonResult.output) {
-            // If we couldn't fetch from database, include raw output
             processedCards.push(pythonResult.output);
           }
         }
       }
-
-      const processingTime = Date.now() - startTime;
 
       res.status(200).json({
         success: true,
@@ -117,7 +98,7 @@ export class MTGController {
         cards: processedCards,
         pythonExecutionSuccess: pythonResult?.success ?? true,
         pythonError: pythonResult?.error,
-        processingTime
+        processingTime: Date.now() - startTime
       });
 
     } catch (error) {
@@ -130,21 +111,13 @@ export class MTGController {
     }
   }
 
-  /**
-   * Save card data to database
-   */
   private async saveCardData(pythonOutput: any, cardNames: string[]): Promise<void> {
-    if (!this.isDatabaseAvailable()) {
-      console.log('Database not available, skipping save operation');
-      return;
-    }
+    if (!this.isDatabaseAvailable()) return;
 
     try {
       if (cardNames.length === 1) {
-        // Single card processing
         await this.saveSingleCard(pythonOutput);
       } else {
-        // Multiple cards processing
         if (pythonOutput.cards) {
           for (const [cardName, cardData] of Object.entries(pythonOutput.cards)) {
             await this.saveSingleCard(cardData, cardName);
@@ -157,62 +130,41 @@ export class MTGController {
     }
   }
 
-  /**
-   * Save a single card's data
-   */
   private async saveSingleCard(cardData: any, cardNameOverride?: string): Promise<void> {
-    const cardName = cardNameOverride || cardData.card_name;
-    if (!cardName) return;
+    const name = cardNameOverride || cardData.card_name;
+    if (!name) return;
 
-    const cardDoc = {
-      cardName,
-      edhrecData: {
-        details: cardData.details,
-        edhrecLink: cardData.edhrec_link,
-        combos: cardData.combos,
-        commanderData: cardData.commander_data,
-        commanderCards: cardData.commander_cards,
-        averageDeck: cardData.average_deck,
-        knownDecks: cardData.known_decks,
-        recommendations: cardData.recommendations
-      },
-      analysis: cardData.analysis,
-      lastUpdated: new Date(),
-      dataSource: cardData.data_source || 'edhrec.com',
-      processingInfo: cardData.processing_info
-    };
+    const edhrec: Record<string, any> = { lastFetched: new Date() };
+    if (cardData.commander_data?.rank != null) edhrec.commanderRank = cardData.commander_data.rank;
+    if (cardData.commander_data?.num_decks != null) edhrec.totalDecks = cardData.commander_data.num_decks;
+    if (Array.isArray(cardData.combos)) edhrec.combos = cardData.combos;
+    if (cardData.recommendations) edhrec.recommendations = cardData.recommendations;
 
-    await MTGCardModel.findOneAndUpdate(
-      { cardName },
-      cardDoc,
-      { upsert: true, new: true }
+    await CardModel.findOneAndUpdate(
+      { name },
+      { $set: { edhrec, lastUpdated: new Date() } },
+      { upsert: false }
     );
   }
 
-  /**
-   * Get card data by name
-   */
   public async getCard(req: Request, res: Response): Promise<void> {
     try {
       const { cardName } = req.params;
-      
-      const card = await MTGCardModel.findOne({ 
-        cardName: new RegExp(`^${escapeRegex(cardName)}$`, 'i') 
+
+      const card = await CardModel.findOne({
+        name: new RegExp(`^${escapeRegex(cardName)}$`, 'i')
       });
 
       if (!card) {
         res.status(404).json({
           success: false,
           error: 'Card not found',
-          suggestion: 'Try processing the card first using POST /api/mtg/process'
+          suggestion: 'Try ingesting the card first via POST /api/scryfall/ingest'
         });
         return;
       }
 
-      res.status(200).json({
-        success: true,
-        card
-      });
+      res.status(200).json({ success: true, card });
 
     } catch (error) {
       console.error('Error retrieving card:', error);
@@ -224,58 +176,32 @@ export class MTGController {
     }
   }
 
-  /**
-   * Search for cards
-   */
   public async searchCards(req: Request, res: Response): Promise<void> {
     try {
-      const { 
-        q: query, 
-        page = '1', 
-        limit = '10',
-        isCommander,
-        hasCombos
-      } = req.query;
+      const { q: query, page = '1', limit = '10', isCommander, hasCombos } = req.query;
 
       const pageNum = parseInt(page as string) || 1;
       const limitNum = parseInt(limit as string) || 10;
       const skip = (pageNum - 1) * limitNum;
 
       const searchQuery: any = {};
-
-      // Text search
-      if (query) {
-        searchQuery.$text = { $search: query as string };
-      }
-
-      // Filter by commander status
-      if (isCommander === 'true') {
-        searchQuery['analysis.investmentMetrics.isCommander'] = true;
-      }
-
-      // Filter by combo status
-      if (hasCombos === 'true') {
-        searchQuery['analysis.investmentMetrics.hasCombos'] = true;
-      }
+      if (query) searchQuery.$text = { $search: query as string };
+      if (isCommander === 'true') searchQuery.investmentSignals = 'is_commander';
+      if (hasCombos === 'true') searchQuery.investmentSignals = 'has_combos';
 
       const [cards, total] = await Promise.all([
-        MTGCardModel.find(searchQuery)
+        CardModel.find(searchQuery)
           .sort(query ? { score: { $meta: 'textScore' } } : { lastUpdated: -1 })
           .skip(skip)
           .limit(limitNum)
           .lean(),
-        MTGCardModel.countDocuments(searchQuery)
+        CardModel.countDocuments(searchQuery)
       ]);
 
       res.status(200).json({
         success: true,
         cards,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum)
-        }
+        pagination: { page: pageNum, limit: limitNum, total, pages: Math.ceil(total / limitNum) }
       });
 
     } catch (error) {
@@ -288,33 +214,26 @@ export class MTGController {
     }
   }
 
-  /**
-   * Get cards with investment potential
-   */
   public async getInvestmentCards(req: Request, res: Response): Promise<void> {
     try {
       const { limit = '20' } = req.query;
       const limitNum = parseInt(limit as string) || 20;
 
-      const cards = await MTGCardModel.find({
+      const cards = await CardModel.find({
         $or: [
-          { 'analysis.investmentMetrics.isCommander': true },
-          { 'analysis.investmentMetrics.hasCombos': true },
-          { 'analysis.synergyAnalysis.totalRecommendations': { $gte: 50 } }
+          { investmentSignals: 'is_commander' },
+          { investmentSignals: 'has_combos' },
+          { investmentSignals: 'high_synergy' }
         ]
       })
-      .sort({ 'analysis.popularityMetrics.totalDecks': -1 })
-      .limit(limitNum)
-      .lean();
+        .sort({ investmentScore: -1 })
+        .limit(limitNum)
+        .lean();
 
       res.status(200).json({
         success: true,
         cards,
-        criteria: [
-          'Is a commander',
-          'Has combo potential',
-          'Has 50+ synergy recommendations'
-        ]
+        criteria: ['Is a commander', 'Has combo potential', 'High synergy score']
       });
 
     } catch (error) {
@@ -327,29 +246,20 @@ export class MTGController {
     }
   }
 
-  /**
-   * Delete card data
-   */
   public async deleteCard(req: Request, res: Response): Promise<void> {
     try {
       const { cardName } = req.params;
 
-      const result = await MTGCardModel.findOneAndDelete({
-        cardName: new RegExp(`^${escapeRegex(cardName)}$`, 'i')
+      const result = await CardModel.findOneAndDelete({
+        name: new RegExp(`^${escapeRegex(cardName)}$`, 'i')
       });
 
       if (!result) {
-        res.status(404).json({
-          success: false,
-          error: 'Card not found'
-        });
+        res.status(404).json({ success: false, error: 'Card not found' });
         return;
       }
 
-      res.status(200).json({
-        success: true,
-        message: `Card "${cardName}" deleted successfully`
-      });
+      res.status(200).json({ success: true, message: `Card "${cardName}" deleted successfully` });
 
     } catch (error) {
       console.error('Error deleting card:', error);
@@ -361,16 +271,12 @@ export class MTGController {
     }
   }
 
-  /**
-   * Get pricing data for a card from TCGPlayer
-   */
   public async getCardPricing(req: Request, res: Response): Promise<void> {
     try {
       const { cardName } = req.params;
-      
-      // Search for the card in TCGPlayer products
+
       const products = await this.tcgService.searchMagicProducts(cardName, 10);
-      
+
       if (products.length === 0) {
         res.status(404).json({
           success: false,
@@ -380,7 +286,6 @@ export class MTGController {
         return;
       }
 
-      // Get pricing for each matching product
       const productPricing = await Promise.all(
         products.map(async (product) => {
           const pricing = await this.tcgService.getProductPrice(product.productId);
@@ -413,18 +318,10 @@ export class MTGController {
     }
   }
 
-  /**
-   * Initialize TCGPlayer data
-   */
-  public async initializeTCGData(req: Request, res: Response): Promise<void> {
+  public async initializeTCGData(_req: Request, res: Response): Promise<void> {
     try {
       await this.tcgService.initializeMagicData();
-      
-      res.status(200).json({
-        success: true,
-        message: 'TCGPlayer Magic data initialization completed'
-      });
-
+      res.status(200).json({ success: true, message: 'TCGPlayer Magic data initialization completed' });
     } catch (error) {
       console.error('Error initializing TCG data:', error);
       res.status(500).json({
@@ -435,29 +332,18 @@ export class MTGController {
     }
   }
 
-  /**
-   * Search TCGPlayer products
-   */
   public async searchTCGProducts(req: Request, res: Response): Promise<void> {
     try {
       const { q, limit = 20 } = req.query;
-      
+
       if (!q || typeof q !== 'string') {
-        res.status(400).json({
-          success: false,
-          error: 'Query parameter "q" is required'
-        });
+        res.status(400).json({ success: false, error: 'Query parameter "q" is required' });
         return;
       }
 
       const products = await this.tcgService.searchMagicProducts(q, parseInt(limit as string));
-      
-      res.status(200).json({
-        success: true,
-        query: q,
-        results: products.length,
-        products
-      });
+
+      res.status(200).json({ success: true, query: q, results: products.length, products });
 
     } catch (error) {
       console.error('Error searching TCG products:', error);
@@ -469,22 +355,14 @@ export class MTGController {
     }
   }
 
-  /**
-   * Get enhanced card data with EDHREC and TCGPlayer pricing
-   */
   public async getEnhancedCardData(req: Request, res: Response): Promise<void> {
     try {
       const { cardName } = req.params;
-      
-      // Get EDHREC data
-      let edhrecData = null;
-      if (this.isDatabaseAvailable()) {
-        edhrecData = await MTGCardModel.findOne({
-          cardName: new RegExp(`^${escapeRegex(cardName)}$`, 'i')
-        });
-      }
 
-      // Get TCGPlayer pricing data
+      const cardData = this.isDatabaseAvailable()
+        ? await CardModel.findOne({ name: new RegExp(`^${escapeRegex(cardName)}$`, 'i') })
+        : null;
+
       const tcgProducts = await this.tcgService.searchMagicProducts(cardName, 5);
       const pricingData = await Promise.all(
         tcgProducts.map(async (product) => {
@@ -496,11 +374,8 @@ export class MTGController {
       res.status(200).json({
         success: true,
         cardName,
-        edhrecData,
-        tcgPlayerData: {
-          matchingProducts: pricingData.length,
-          products: pricingData
-        },
+        cardData,
+        tcgPlayerData: { matchingProducts: pricingData.length, products: pricingData },
         lastUpdated: new Date().toISOString()
       });
 
@@ -514,23 +389,15 @@ export class MTGController {
     }
   }
 
-  /**
-   * Initialize specific Magic sets from TCGCSV
-   */
   public async initializeSets(req: Request, res: Response): Promise<void> {
     try {
       const { sets = [] } = req.body;
-      
+
       if (!Array.isArray(sets)) {
-        res.status(400).json({
-          success: false,
-          error: 'Sets must be an array of set names'
-        });
+        res.status(400).json({ success: false, error: 'Sets must be an array of set names' });
         return;
       }
 
-      console.log(`Initializing sets: ${sets.length > 0 ? sets.join(', ') : 'popular sets'}`);
-      
       await this.tcgService.initializeMagicSets(sets);
 
       res.status(200).json({
@@ -550,13 +417,10 @@ export class MTGController {
     }
   }
 
-  /**
-   * Get available Magic sets information
-   */
   public async getAvailableSets(req: Request, res: Response): Promise<void> {
     try {
       const { category } = req.query;
-      
+
       let sets;
       if (category && typeof category === 'string') {
         const validCategories = ['classic', 'modern', 'masters', 'commander', 'universes-beyond', 'un-sets'];
@@ -577,11 +441,7 @@ export class MTGController {
         success: true,
         totalSets: sets.length,
         category: category || 'all',
-        sets: sets.map(set => ({
-          name: set.name,
-          groupId: set.groupId,
-          endpoint: set.endpoint
-        }))
+        sets: sets.map(set => ({ name: set.name, groupId: set.groupId, endpoint: set.endpoint }))
       });
 
     } catch (error) {

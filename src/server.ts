@@ -42,9 +42,7 @@ async function startServer() {
       console.log('  DELETE /api/mtg/card/:name - Delete card data');
     });
 
-    // Skip local cron in production — Azure Functions Timer triggers handle scheduling
-    const isAzure = !!process.env.AZURE_FUNCTIONS_ENVIRONMENT || !!process.env.WEBSITE_SITE_NAME;
-    if (process.env.SCHEDULE_INGEST === 'true' && !isAzure) {
+    if (process.env.SCHEDULE_INGEST === 'true') {
       const svc = ScryfallService.getInstance();
       cron.schedule('0 2 * * *', async () => {
         try {

@@ -133,23 +133,6 @@ export class PythonService {
     }
   }
 
-  /**
-   * Validate that a Python script exists
-   */
-  public async validateScript(scriptName: string, scriptPath?: string): Promise<boolean> {
-    try {
-      const fullPath = path.join(scriptPath || this.defaultScriptPath, scriptName);
-      const fs = await import('fs/promises');
-      await fs.access(fullPath);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Get the default script path
-   */
   public getDefaultScriptPath(): string {
     return this.defaultScriptPath;
   }
