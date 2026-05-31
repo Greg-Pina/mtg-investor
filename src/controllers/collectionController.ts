@@ -9,6 +9,13 @@ import { collectionImportService, subscribeToProgress } from '../services/Collec
 import { generateMarketUrls } from '../utils/marketplaceLinks';
 import { logger } from '../utils/logger';
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const VALID_STATUSES = ['In Collection', 'Listed for Sale', 'Sold'];
+const VALID_CONDITIONS = ['NM','LP','MP','HP','D','ALT','ART','PRE','TS','SGN','BGS','B10','B95','B9','B85','B8','B75','B7','PSA','P10','P95','P9','P85','P8','P75','P7','CGC','C10P','C10','C95','C9','C85','C8','C75','C7','PCG','PC10','PC95','PC9','PC85','PC8','PC75','PC7'];
+
 export const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
@@ -25,13 +32,20 @@ export const upload = multer({
 
 export async function getCollection(req: Request, res: Response): Promise<void> {
   try {
-    const { status, source, condition, isFoil, q, page = '1', limit = '50' } = req.query as Record<string, string>;
+    const rawStatus = typeof req.query.status === 'string' ? req.query.status : '';
+    const rawSource = typeof req.query.source === 'string' ? req.query.source : '';
+    const rawCondition = typeof req.query.condition === 'string' ? req.query.condition : '';
+    const rawIsFoil = typeof req.query.isFoil === 'string' ? req.query.isFoil : '';
+    const rawQ = typeof req.query.q === 'string' ? req.query.q : '';
+    const page = typeof req.query.page === 'string' ? req.query.page : '1';
+    const limit = typeof req.query.limit === 'string' ? req.query.limit : '50';
+
     const filter: Record<string, unknown> = {};
-    if (status) filter.status = status;
-    if (source) filter.source = source;
-    if (condition) filter.condition = condition;
-    if (isFoil !== undefined) filter.isFoil = isFoil === 'true';
-    if (q) filter.name = new RegExp(q, 'i');
+    if (rawStatus && VALID_STATUSES.includes(rawStatus)) filter.status = rawStatus;
+    if (rawSource) filter.source = rawSource;
+    if (rawCondition && VALID_CONDITIONS.includes(rawCondition)) filter.condition = rawCondition;
+    if (rawIsFoil) filter.isFoil = rawIsFoil === 'true';
+    if (rawQ) filter.name = new RegExp(escapeRegex(rawQ), 'i');
 
     const pageNum = Math.max(1, parseInt(page, 10));
     const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10)));
