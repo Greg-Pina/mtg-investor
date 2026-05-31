@@ -39,7 +39,6 @@ src/
 ├── controllers/
 │   ├── collectionController.ts   # Collection CRUD, import, portfolio, store
 │   └── enrichmentController.ts  # TCG + EDHREC enrichment
-├── graphql/             # Schema, resolvers, types
 ├── middleware/          # JWT auth, rate limiting
 ├── models/
 │   ├── Card.ts                   # Gold layer: Scryfall/EDHREC/investment data
@@ -61,9 +60,12 @@ src/
 │   ├── EDHRECService.ts            # JSON fast-path (json.edhrec.com)
 │   ├── InvestmentScoringService.ts
 │   └── ScryfallService.ts
-├── utils/
-│   ├── logger.ts
-│   └── marketplaceLinks.ts       # TCGPlayer + ManaPool URL builder
+├── types/
+│   └── cards.ts                  # Shared interfaces: CardFilterInput, FinancialSnapshot, …
+└── utils/
+    ├── financial.ts              # normalizeFinancialSnapshot helper
+    ├── logger.ts
+    └── marketplaceLinks.ts       # TCGPlayer + ManaPool URL builder
 
 public/
 ├── index.html    # Main dashboard (5 tabs)
@@ -71,10 +73,7 @@ public/
 └── admin.html    # Admin panel
 
 python/
-└── advanced_processor.py   # Deep EDHREC enrichment via pyedhrec (batch path)
-
-azure-functions/
-└── src/functions/   # alertCheck, enrichCard, investmentScoring, scryfallIngest
+└── advanced_processor.py   # Optional: deep EDHREC enrichment via pyedhrec (fallback path)
 ```
 
 ## Prerequisites
@@ -219,8 +218,8 @@ The `/api/collection/portfolio` endpoint cross-references your collection agains
 
 Two paths:
 
-- **Fast path** (`EDHRECService`) — direct HTTP to `https://json.edhrec.com/pages`. Used for single-card real-time enrichment via `POST /api/enrich/edhrec`. Undocumented endpoint; may be subject to rate limits.
-- **Deep path** (`python/advanced_processor.py`) — uses `pyedhrec` library. Invoked as Python subprocess fallback and by Azure Functions for batch enrichment. Richer data including commander rank, deck counts, full recommendation matrix, and combos.
+- **Fast path** (`EDHRECService`) — direct HTTP to `https://json.edhrec.com/pages`. Used for all real-time enrichment via `POST /api/enrich/edhrec`. Undocumented endpoint; may be subject to rate limits.
+- **Fallback path** (`python/advanced_processor.py`) — uses `pyedhrec` library. Invoked as a Python subprocess if `EDHRECService` fails. Requires Python 3 and `pip install pyedhrec`; degrades gracefully if unavailable.
 
 ## Existing REST API
 
@@ -272,22 +271,6 @@ Two paths:
 | `GET` | `/api/health` | Service health check |
 | `GET` | `/api/docs` | Swagger/OpenAPI UI |
 
-## GraphQL API
-
-Available at `POST /api/graphql`.
-
-```graphql
-query {
-  cards(filter: { q: "sol ring", setCode: "cmm", rarity: "rare", page: 1, limit: 20 }) {
-    cards {
-      name setCode rarity investmentScore
-      financialSnapshot { usd usdFoil priceChange30d }
-    }
-    total page limit
-  }
-}
-```
-
 ## Testing
 
 ```bash
@@ -295,13 +278,44 @@ npm test
 npm run test:coverage
 ```
 
-## Azure Deployment
+## Background Scheduling
+
+When `SCHEDULE_INGEST=true`, three cron jobs run inside the server process:
+
+| Time (UTC) | Job | What it does |
+|---|---|---|
+| 02:00 daily | Scryfall ingest | Fetches up to 2,000 cards from Scryfall, upserts into `cards` collection |
+| 03:00 daily | Investment scoring | Recalculates `investmentScore` + `investmentSignals` for all cards |
+| 03:30 daily | Alert check | Evaluates pending price alerts and marks triggered ones |
+
+Set `SCHEDULE_INGEST=false` (or omit it) when running multiple instances to avoid duplicate job execution.
+
+## Docker
 
 ```bash
-azd up
+docker build -t mtg-investor .
+docker run -p 3000:3000 -e MONGODB_URI=<uri> mtg-investor
 ```
 
-Azure Functions (`azure-functions/`): `scryfallIngest`, `enrichCard`, `investmentScoring`, `alertCheck` — all timer-triggered daily. Infrastructure in `infra/main.bicep`.
+## Changelog
+
+### v2 (2026-05)
+
+**Removed:**
+- `azure-functions/` — `alertCheck`, `enrichCard`, `investmentScoring`, `scryfallIngest` were serverless duplicates of the in-process `node-cron` jobs; no CI/CD pipeline was ever wired to deploy them
+- `infra/main.bicep` + `azure.yaml` — Azure Storage Queue and Function App infrastructure no longer needed
+- `src/graphql/` and `/api/graphql` endpoint — thin wrapper over the same services the REST routes call; dropped `graphql` and `graphql-http` packages
+- `@azure/functions` and `@azure/storage-queue` packages
+- `QueueService` — enrichment is now synchronous (EDHRECService → Python fallback)
+- Unused `MTGCardModel` (`mtgcards` collection) — abandoned scaffolding replaced by `CardModel`
+
+**Fixed:**
+- `CardDataPipelineService.enrichCard()` previously mocked Express `req`/`res` to invoke `EnrichmentController`; now calls `EDHRECService` directly
+- `mtgController` migrated from dead `MTGCardModel` to `CardModel` with correct field names (`name`, `investmentSignals`, `edhrec.*`)
+
+**Relocated:**
+- `FinancialSnapshot`, `CardFilterInput`, `CardRelationshipCluster` → `src/types/cards.ts`
+- `normalizeFinancialSnapshot()` → `src/utils/financial.ts`
 
 ## License
 
