@@ -37,7 +37,7 @@ export class AuthController {
   public async login(req: Request, res: Response): Promise<void> {
     try {
       const { email, password } = req.body || {};
-      if (!email || !password) {
+      if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
         res.status(400).json({ success: false, error: 'email and password required' });
         return;
       }

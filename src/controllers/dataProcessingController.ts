@@ -142,11 +142,12 @@ export class DataProcessingController {
     try {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
-      const status = req.query.status as string;
+      const statusParam = typeof req.query.status === 'string' ? req.query.status : '';
+      const VALID_STATUSES = ['processing', 'success', 'error'];
 
       const query: any = {};
-      if (status) {
-        query.status = status;
+      if (statusParam && VALID_STATUSES.includes(statusParam)) {
+        query.status = statusParam;
       }
 
       const skip = (page - 1) * limit;
