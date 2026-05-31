@@ -7,6 +7,7 @@ import enrich from "./enrich";
 import watchlist from "./watchlist";
 import auth from "./auth";
 import graphql from './graphql';
+import collection from './collection';
 import { helloController } from "../controllers/helloController";
 
 const router = Router();
@@ -19,6 +20,7 @@ router.use("/enrich", enrich);
 router.use("/watchlist", watchlist);
 router.use("/auth", auth);
 router.use('/graphql', graphql);
+router.use('/', collection);
 
 router.get("/hello", helloController);
 

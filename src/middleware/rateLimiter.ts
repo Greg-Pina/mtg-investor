@@ -15,3 +15,11 @@ export const apiLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, error: 'Rate limit exceeded. Try again in a minute.' }
 });
+
+// Lenient limiter for public HTML pages — prevents scraping, not normal browsing
+export const pageLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+});

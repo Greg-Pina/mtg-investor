@@ -7,7 +7,7 @@ export class WatchlistController {
   /** GET /api/watchlist?sessionId=... */
   public async list(req: Request, res: Response): Promise<void> {
     try {
-      const sessionId = req.query.sessionId as string;
+      const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
       if (!sessionId) {
         res.status(400).json({ success: false, error: 'sessionId required' });
         return;
@@ -26,7 +26,7 @@ export class WatchlistController {
   public async add(req: Request, res: Response): Promise<void> {
     try {
       const { sessionId, cardId, targetPrice, notes } = req.body || {};
-      if (!sessionId || !cardId) {
+      if (!sessionId || !cardId || typeof sessionId !== 'string' || typeof cardId !== 'string') {
         res.status(400).json({ success: false, error: 'sessionId and cardId required' });
         return;
       }
@@ -54,7 +54,7 @@ export class WatchlistController {
   public async remove(req: Request, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const sessionId = req.query.sessionId as string;
+      const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
       if (!sessionId) {
         res.status(400).json({ success: false, error: 'sessionId required' });
         return;

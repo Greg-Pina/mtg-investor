@@ -14,6 +14,10 @@ export interface MTGCardRequest {
   };
 }
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export class MTGController {
   private pythonService: PythonService;
   private tcgService: TCGCSVService;
@@ -193,7 +197,7 @@ export class MTGController {
       const { cardName } = req.params;
       
       const card = await MTGCardModel.findOne({ 
-        cardName: new RegExp(`^${cardName}$`, 'i') 
+        cardName: new RegExp(`^${escapeRegex(cardName)}$`, 'i') 
       });
 
       if (!card) {
@@ -331,7 +335,7 @@ export class MTGController {
       const { cardName } = req.params;
 
       const result = await MTGCardModel.findOneAndDelete({
-        cardName: new RegExp(`^${cardName}$`, 'i')
+        cardName: new RegExp(`^${escapeRegex(cardName)}$`, 'i')
       });
 
       if (!result) {
@@ -476,7 +480,7 @@ export class MTGController {
       let edhrecData = null;
       if (this.isDatabaseAvailable()) {
         edhrecData = await MTGCardModel.findOne({
-          cardName: new RegExp(`^${cardName}$`, 'i')
+          cardName: new RegExp(`^${escapeRegex(cardName)}$`, 'i')
         });
       }
 

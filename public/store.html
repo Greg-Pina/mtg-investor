@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Moronic MTG — Storefront</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen font-mono">
+
+  <header class="sticky top-0 z-50 bg-gray-900 border-b border-purple-900/50 px-6 py-4 flex items-center gap-4">
+    <a href="/" class="text-purple-400 font-bold text-lg tracking-tight hover:text-purple-300 transition-colors">&#11041; Moronic MTG</a>
+    <span class="text-gray-600">/</span>
+    <span class="text-gray-300 text-sm">Storefront</span>
+    <div class="ml-auto text-xs text-gray-500">
+      <span id="listing-count"></span>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-8">
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold text-white mb-1">Cards for Sale</h1>
+      <p class="text-sm text-gray-500">Browse available inventory. Purchase directly through our marketplace listings.</p>
+    </div>
+
+    <!-- Filters -->
+    <div class="flex gap-3 mb-6 flex-wrap">
+      <input id="search-q" type="text" placeholder="Search cards..." oninput="renderCards()"
+        class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm flex-1 min-w-40 focus:outline-none focus:border-purple-500" />
+      <select id="filter-foil" onchange="renderCards()" class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500">
+        <option value="">All Finishes</option>
+        <option value="foil">Foil only</option>
+        <option value="nonfoil">Non-foil only</option>
+      </select>
+      <select id="filter-cond" onchange="renderCards()" class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500">
+        <option value="">All Conditions</option>
+        <option>NM</option><option>LP</option><option>MP</option><option>HP</option>
+      </select>
+    </div>
+
+    <div id="listings-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div class="text-gray-600 text-sm col-span-full py-8 text-center">Loading inventory...</div>
+    </div>
+
+    <div id="empty-state" style="display:none" class="text-center py-16">
+      <div class="text-4xl mb-3">&#128584;</div>
+      <div class="text-gray-400 text-lg font-medium mb-1">No cards listed for sale</div>
+      <div class="text-gray-600 text-sm">Check back later or <a href="/" class="text-purple-400 hover:text-purple-300">browse our collection.</a></div>
+    </div>
+  </main>
+
+  <footer class="border-t border-gray-800 mt-16 py-6 text-center text-xs text-gray-600">
+    &#169; 2026 Moronic MTG. Prices sourced from TCGPlayer and ManaPool. All card names are property of Wizards of the Coast.
+  </footer>
+
+<script>
+var allListings = [];
+
+var condLabel = {NM:'Near Mint',LP:'Lightly Played',MP:'Moderately Played',HP:'Heavily Played',D:'Damaged'};
+var condColor = {NM:'text-green-400',LP:'text-yellow-400',MP:'text-orange-400',HP:'text-red-400',D:'text-red-600'};
+
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmt(v){ return v == null ? '' : '$' + Number(v).toFixed(2); }
+
+function cardHtml(c) {
+  var market = c.echoPrices && (c.isFoil ? c.echoPrices.foilPrice : c.echoPrices.tcgMarket);
+  return '<div class="bg-gray-900 rounded-xl border border-gray-800 hover:border-purple-700 transition-colors p-4 flex flex-col gap-3">' +
+    '<div class="flex items-start justify-between gap-2">' +
+      '<div>' +
+        '<div class="font-semibold text-sm leading-tight">' + esc(c.name) + '</div>' +
+        '<div class="text-xs text-gray-500 mt-0.5">' + esc(c.expansion || c.setCode) + ' &middot; ' + esc(c.setCode) + '</div>' +
+      '</div>' +
+      (c.isFoil ? '<span class="text-xs bg-yellow-900/60 text-yellow-300 px-1.5 py-0.5 rounded whitespace-nowrap">&#10022; Foil</span>' : '') +
+    '</div>' +
+    '<div class="flex items-center gap-2 text-xs">' +
+      '<span class="' + (condColor[c.condition] || 'text-gray-400') + '">' + esc(condLabel[c.condition] || c.condition) + '</span>' +
+      '<span class="text-gray-600">&middot;</span>' +
+      '<span class="text-gray-400">' + esc(c.language) + '</span>' +
+      '<span class="text-gray-600">&middot;</span>' +
+      '<span class="text-gray-400">' + c.quantity + ' available</span>' +
+    '</div>' +
+    (market ? '<div class="text-purple-300 font-bold text-base">' + fmt(market) + ' <span class="text-xs text-gray-500 font-normal">market</span></div>' : '') +
+    '<div class="flex gap-2 mt-auto">' +
+      '<a href="' + esc(c.marketUrls.tcgplayer) + '" target="_blank" rel="noopener" ' +
+        'class="flex-1 text-center bg-blue-700 hover:bg-blue-600 text-white text-xs py-2 rounded transition-colors font-medium">' +
+        'Buy on TCGplayer' +
+      '</a>' +
+      '<a href="' + esc(c.marketUrls.manapool) + '" target="_blank" rel="noopener" ' +
+        'class="flex-1 text-center bg-purple-800 hover:bg-purple-700 text-white text-xs py-2 rounded transition-colors font-medium">' +
+        'Buy on Mana Pool' +
+      '</a>' +
+    '</div>' +
+  '</div>';
+}
+
+function renderCards() {
+  var q = document.getElementById('search-q').value.toLowerCase();
+  var filterFoil = document.getElementById('filter-foil').value;
+  var filterCond = document.getElementById('filter-cond').value;
+  var filtered = allListings.filter(function(c) {
+    if (q && c.name.toLowerCase().indexOf(q) === -1) return false;
+    if (filterFoil === 'foil' && !c.isFoil) return false;
+    if (filterFoil === 'nonfoil' && c.isFoil) return false;
+    if (filterCond && c.condition !== filterCond) return false;
+    return true;
+  });
+  var grid = document.getElementById('listings-grid');
+  var empty = document.getElementById('empty-state');
+  if (!filtered.length) {
+    grid.innerHTML = '';
+    empty.style.display = '';
+  } else {
+    grid.innerHTML = filtered.map(cardHtml).join('');
+    empty.style.display = 'none';
+  }
+}
+
+async function loadListings() {
+  try {
+    var r = await fetch('/api/store');
+    if (!r.ok) throw new Error('Failed to load listings');
+    allListings = await r.json();
+    var countEl = document.getElementById('listing-count');
+    countEl.textContent = allListings.length + ' listing' + (allListings.length !== 1 ? 's' : '');
+    renderCards();
+  } catch(err) {
+    document.getElementById('listings-grid').innerHTML = '<div class="text-red-500 text-sm col-span-full py-8 text-center">' +
+      'Could not load listings: ' + err.message + '</div>';
+  }
+}
+
+loadListings();
+</script>
+</body>
+</html>

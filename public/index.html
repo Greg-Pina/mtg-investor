@@ -1,100 +1,475 @@
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>MTG Investor – Scryfall Explorer</title>
-    <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 20px; }
-      header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-      input[type="text"] { padding: 8px; min-width: 280px; }
-      button { padding: 8px 12px; }
-      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; margin-top: 20px; }
-      .card { border: 1px solid #e3e3e3; border-radius: 8px; padding: 10px; background: #fff; }
-      .meta { font-size: 12px; color: #666; margin-top: 6px; }
-      .chart { margin-top: 24px; }
-    </style>
-  </head>
-  <body>
-    <header>
-      <h2 style="margin: 0">Scryfall Explorer</h2>
-      <input id="q" type="text" placeholder="e:g: type:legendary t:creature o:draw cmc<=3" />
-  <button id="querySavedBtn">Search DB</button>
-  <button id="ingestBtn" title="Admin: run limited ingest">Ingest (admin)</button>
-  <input id="filter" type="text" placeholder="optional: set filter" />
-    </header>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Moronic MTG — Investment Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .tab-active { border-bottom: 2px solid rgb(168,85,247); color: rgb(192,132,252); }
+    .signal-badge { display: inline-flex; align-items: center; padding: 0.125rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 500; }
+    .card-row:hover { background: rgba(139,92,246,0.07); }
+    .progress-bar { transition: width 0.3s ease; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen font-mono">
 
-    <section class="chart">
-      <svg id="priceChart" width="800" height="240"></svg>
+  <!-- Nav -->
+  <header class="sticky top-0 z-50 bg-gray-900 border-b border-purple-900/50 px-6 py-3 flex items-center gap-6">
+    <span class="text-purple-400 font-bold text-lg tracking-tight">&#11041; Moronic MTG</span>
+    <nav class="flex gap-1 ml-4 text-sm">
+      <button onclick="switchTab('dashboard')" id="tab-dashboard" class="px-3 py-1.5 rounded hover:bg-purple-900/30 tab-active">Dashboard</button>
+      <button onclick="switchTab('allcards')" id="tab-allcards" class="px-3 py-1.5 rounded hover:bg-purple-900/30 text-gray-400">All Cards</button>
+      <button onclick="switchTab('collection')" id="tab-collection" class="px-3 py-1.5 rounded hover:bg-purple-900/30 text-gray-400">My Collection</button>
+      <button onclick="switchTab('import')" id="tab-import" class="px-3 py-1.5 rounded hover:bg-purple-900/30 text-gray-400">Import</button>
+      <button onclick="switchTab('sync')" id="tab-sync" class="px-3 py-1.5 rounded hover:bg-purple-900/30 text-gray-400">Sync</button>
+    </nav>
+    <div class="ml-auto flex gap-3 text-xs text-gray-500">
+      <a href="/store" class="hover:text-purple-400 transition-colors">Storefront &nearr;</a>
+      <a href="/admin" class="hover:text-purple-400 transition-colors">Admin &nearr;</a>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-6">
+
+    <!-- DASHBOARD -->
+    <section id="pane-dashboard">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-gray-900 rounded-xl border border-purple-900/40 p-4">
+          <div class="text-xs text-gray-500 mb-1">Portfolio Value</div>
+          <div id="stat-value" class="text-2xl font-bold text-purple-300">&#8212;</div>
+        </div>
+        <div class="bg-gray-900 rounded-xl border border-purple-900/40 p-4">
+          <div class="text-xs text-gray-500 mb-1">Unique Cards</div>
+          <div id="stat-unique" class="text-2xl font-bold text-purple-300">&#8212;</div>
+        </div>
+        <div class="bg-gray-900 rounded-xl border border-purple-900/40 p-4">
+          <div class="text-xs text-gray-500 mb-1">Total Copies</div>
+          <div id="stat-total" class="text-2xl font-bold text-purple-300">&#8212;</div>
+        </div>
+        <div class="bg-gray-900 rounded-xl border border-purple-900/40 p-4">
+          <div class="text-xs text-gray-500 mb-1">Echo Value</div>
+          <div id="stat-echo" class="text-2xl font-bold text-purple-300">&#8212;</div>
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-6">
+        <div>
+          <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Top Signals &mdash; Owned</h2>
+          <div id="dashboard-owned"><div class="text-gray-600 text-sm">Loading...</div></div>
+        </div>
+        <div>
+          <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Top Opportunities &mdash; Not Owned</h2>
+          <div id="dashboard-opportunities"><div class="text-gray-600 text-sm">Loading...</div></div>
+        </div>
+      </div>
     </section>
 
-    <section class="grid" id="cards"></section>
+    <!-- ALL CARDS -->
+    <section id="pane-allcards" class="hidden">
+      <div class="flex gap-3 mb-4 flex-wrap">
+        <input id="allcards-q" type="text" placeholder="Search cards..." class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm flex-1 min-w-40 focus:outline-none focus:border-purple-500" oninput="loadAllCards()" />
+        <select id="allcards-rarity" class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500" onchange="loadAllCards()">
+          <option value="">All Rarities</option>
+          <option>mythic</option><option>rare</option><option>uncommon</option><option>common</option>
+        </select>
+        <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+          <input type="checkbox" id="owned-only" onchange="loadAllCards()" class="accent-purple-500" /> Owned only
+        </label>
+      </div>
+      <div id="allcards-table"><div class="text-gray-600 text-sm">Loading...</div></div>
+    </section>
 
-    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-    <script>
-      const $ = (sel) => document.querySelector(sel);
-      const cardsEl = $('#cards');
-      const chartEl = d3.select('#priceChart');
+    <!-- MY COLLECTION -->
+    <section id="pane-collection" class="hidden">
+      <div class="flex gap-3 mb-4 flex-wrap">
+        <input id="col-q" type="text" placeholder="Filter by name..." class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm flex-1 min-w-40 focus:outline-none focus:border-purple-500" oninput="loadCollection()" />
+        <select id="col-status" class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500" onchange="loadCollection()">
+          <option value="">All Statuses</option>
+          <option>In Collection</option><option>Listed for Sale</option><option>Sold</option>
+        </select>
+        <select id="col-source" class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500" onchange="loadCollection()">
+          <option value="">All Sources</option>
+          <option value="manabox">ManaBox</option><option value="dragonshield">DragonShield</option>
+          <option value="tcgplayer">TCGPlayer</option><option value="echomtg">EchoMTG</option><option value="manual">Manual</option>
+        </select>
+      </div>
+      <div id="collection-table"><div class="text-gray-600 text-sm">Loading...</div></div>
+      <div id="collection-pagination" class="flex gap-2 mt-4 justify-center text-sm"></div>
+    </section>
 
-      function renderCards(cards) {
-        cardsEl.innerHTML = cards.map(c => {
-          const img = c.image_uris?.small || c.raw?.image_uris?.small;
-          const name = c.name || c.raw?.name;
-          const setName = c.setName || c.raw?.set_name;
-          const rarity = c.rarity || c.raw?.rarity;
-          const usd = c.usd || c.prices?.usd || (c.raw?.prices?.usd ?? '');
-          return `<div class="card">
-            ${img ? `<img src="${img}" alt="${name}" style="width:100%; border-radius:6px;"/>` : ''}
-            <div><strong>${name || 'Unknown'}</strong></div>
-            <div class="meta">${setName || ''} • ${rarity || ''}</div>
-            <div class="meta">USD: ${usd || '—'}</div>
-          </div>`;
-        }).join('');
-      }
+    <!-- IMPORT -->
+    <section id="pane-import" class="hidden">
+      <div class="max-w-2xl">
+        <div id="dropzone" class="border-2 border-dashed border-gray-700 rounded-xl p-10 text-center cursor-pointer hover:border-purple-500 transition-colors mb-4"
+             ondragover="event.preventDefault()" ondrop="handleDrop(event)" onclick="document.getElementById('file-input').click()">
+          <div class="text-4xl mb-2">&#128193;</div>
+          <div class="text-gray-400 text-sm">Drop CSV here or click to browse</div>
+          <div id="dropzone-filename" class="text-purple-400 text-sm mt-1" style="display:none"></div>
+          <input type="file" id="file-input" accept=".csv" style="display:none" onchange="handleFileSelect(this)" />
+        </div>
+        <div class="flex gap-3 mb-4 items-center">
+          <label class="text-sm text-gray-400 w-28">Source:</label>
+          <select id="source-override" class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500">
+            <option value="">Auto-detect</option>
+            <option value="manabox">ManaBox</option><option value="dragonshield">DragonShield</option>
+            <option value="tcgplayer">TCGPlayer</option><option value="echomtg">EchoMTG</option><option value="generic">Generic</option>
+          </select>
+          <select id="merge-strategy" class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500">
+            <option value="sum">Sum quantities</option><option value="replace">Replace existing</option>
+          </select>
+        </div>
+        <div id="preview-panel" style="display:none" class="mb-4 bg-gray-900 rounded-xl border border-gray-800 p-4">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="text-sm text-gray-300">Detected: <strong id="preview-source" class="text-purple-400"></strong></span>
+            <span id="preview-counts" class="text-xs text-gray-500"></span>
+          </div>
+          <div id="preview-defaults" style="display:none" class="text-xs text-yellow-600 mb-2"></div>
+          <div id="preview-table" class="overflow-x-auto text-xs"></div>
+        </div>
+        <div class="flex gap-3 items-center mb-6">
+          <button id="preview-btn" onclick="doPreview()" disabled class="bg-gray-700 text-gray-500 px-4 py-2 rounded text-sm cursor-not-allowed">Preview</button>
+          <button id="import-btn" onclick="doImport()" disabled class="bg-purple-600 text-white px-6 py-2 rounded text-sm opacity-40 cursor-not-allowed transition-colors">Import Cards</button>
+        </div>
+        <div id="import-progress" style="display:none" class="mb-6">
+          <div class="flex justify-between text-xs text-gray-400 mb-1">
+            <span id="progress-label">Processing...</span><span id="progress-pct">0%</span>
+          </div>
+          <div class="bg-gray-800 rounded-full h-2 overflow-hidden">
+            <div id="progress-bar" class="progress-bar bg-purple-500 h-2 rounded-full" style="width:0%"></div>
+          </div>
+          <div id="echo-sync-label" style="display:none" class="text-xs text-gray-500 mt-1">Syncing to EchoMTG...</div>
+        </div>
+        <div id="import-result" style="display:none" class="bg-gray-900 rounded-xl border border-gray-800 p-4 mb-6 text-sm">
+          <div id="result-summary"></div>
+        </div>
+        <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">Import History</h3>
+        <div id="import-history" class="space-y-2 text-sm"></div>
+      </div>
+    </section>
 
-      function renderPriceHistogram(cards) {
-        const prices = cards
-          .map(c => parseFloat(c.usd || c.prices?.usd || c.raw?.prices?.usd))
-          .filter(v => !Number.isNaN(v));
-        const svg = chartEl;
-        svg.selectAll('*').remove();
-        const width = +svg.attr('width');
-        const height = +svg.attr('height');
-        if (prices.length === 0) return;
-        const x = d3.scaleLinear().domain([0, d3.max(prices)]).range([40, width - 10]);
-        const bins = d3.bin().thresholds(20)(prices);
-        const y = d3.scaleLinear().domain([0, d3.max(bins, d => d.length)]).nice().range([height - 30, 10]);
-        svg.append('g').attr('transform', `translate(0,${height - 30})`).call(d3.axisBottom(x));
-        svg.append('g').attr('transform', 'translate(40,0)').call(d3.axisLeft(y));
-        svg.selectAll('rect')
-          .data(bins)
-          .enter().append('rect')
-          .attr('x', d => x(d.x0))
-          .attr('y', d => y(d.length))
-          .attr('width', d => Math.max(0, x(d.x1) - x(d.x0) - 1))
-          .attr('height', d => (height - 30) - y(d.length))
-          .attr('fill', '#4f46e5');
-      }
+    <!-- SYNC -->
+    <section id="pane-sync" class="hidden max-w-xl">
+      <div class="bg-gray-900 rounded-xl border border-gray-800 p-6 mb-6">
+        <h2 class="text-sm font-semibold text-gray-300 mb-1">EchoMTG Sync</h2>
+        <p class="text-xs text-gray-500 mb-4">Pull your full EchoMTG inventory and merge it with your local collection.</p>
+        <div class="flex gap-3 items-center">
+          <button onclick="doEchoSync()" class="bg-purple-700 hover:bg-purple-600 text-white px-5 py-2 rounded text-sm transition-colors">Sync from EchoMTG</button>
+          <span id="sync-status" class="text-xs text-gray-500"></span>
+        </div>
+      </div>
+      <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">Sync Log</h3>
+      <div id="sync-log" class="text-xs text-gray-500 font-mono bg-gray-900 rounded-xl p-4 max-h-64 overflow-y-auto space-y-1"></div>
+    </section>
 
-      $('#querySavedBtn').addEventListener('click', async () => {
-        const q = $('#q').value.trim();
-        const setFilter = $('#filter').value.trim();
-        const params = new URLSearchParams();
-        if (q) params.set('q', q);
-        if (setFilter) params.set('setCode', setFilter);
-        params.set('limit', '50');
-        const res = await fetch(`/api/scryfall/cards?${params.toString()}`);
-        const json = await res.json();
-        const cards = json?.cards || [];
-        renderCards(cards);
-        renderPriceHistogram(cards);
-      });
+  </main>
 
-      $('#ingestBtn').addEventListener('click', async () => {
-        const res = await fetch('/api/scryfall/ingest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 250 }) });
-        const json = await res.json();
-        alert(`Ingest saved: ${json.saved || 0}`);
-      });
-    </script>
-  </body>
+<script>
+var currentFile = null;
+var collectionPage = 1;
+var syncLog = [];
+
+function switchTab(name) {
+  ['dashboard','allcards','collection','import','sync'].forEach(function(t) {
+    document.getElementById('pane-' + t).classList.add('hidden');
+    var btn = document.getElementById('tab-' + t);
+    btn.classList.remove('tab-active');
+    btn.classList.add('text-gray-400');
+    btn.classList.remove('text-purple-400');
+  });
+  document.getElementById('pane-' + name).classList.remove('hidden');
+  var active = document.getElementById('tab-' + name);
+  active.classList.add('tab-active', 'text-purple-400');
+  active.classList.remove('text-gray-400');
+  if (name === 'dashboard') loadDashboard();
+  if (name === 'allcards') loadAllCards();
+  if (name === 'collection') loadCollection();
+  if (name === 'import') loadImportHistory();
+}
+
+function fmt(v) { return v == null ? '&#8212;' : '$' + Number(v).toFixed(2); }
+function esc(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function condColor(c) { return {NM:'text-green-400',LP:'text-yellow-400',MP:'text-orange-400',HP:'text-red-400',D:'text-red-600'}[c] || 'text-gray-400'; }
+function statusColor(s) { return {'In Collection':'text-blue-400','Listed for Sale':'text-green-400','Sold':'text-gray-500'}[s] || 'text-gray-400'; }
+function signalBadge(sig) {
+  var map = {price_rising:'bg-green-900 text-green-300',high_deck_count:'bg-blue-900 text-blue-300',has_combos:'bg-yellow-900 text-yellow-300',high_synergy:'bg-purple-900 text-purple-300',is_commander:'bg-indigo-900 text-indigo-300',price_falling:'bg-red-900 text-red-300',mythic:'bg-orange-900 text-orange-300',rare:'bg-gray-800 text-gray-300'};
+  return '<span class="signal-badge ' + (map[sig] || 'bg-gray-800 text-gray-400') + '">' + esc(sig.replace(/_/g,' ')) + '</span>';
+}
+
+async function apiFetch(url, opts) {
+  var r = await fetch(url, opts || {});
+  if (!r.ok) { var e = await r.json().catch(function(){return {};}); throw new Error(e.error || r.statusText); }
+  return r.json();
+}
+
+// Dashboard
+async function loadDashboard() {
+  try {
+    var data = await apiFetch('/api/collection/portfolio');
+    document.getElementById('stat-value').innerHTML = fmt(data.portfolioValue);
+    document.getElementById('stat-unique').textContent = data.uniqueCards != null ? data.uniqueCards : '—';
+    document.getElementById('stat-total').textContent = data.totalCards != null ? data.totalCards : '—';
+    document.getElementById('stat-echo').innerHTML = data.echoStats && data.echoStats.total_value ? fmt(data.echoStats.total_value) : '&#8212;';
+    var ownedEl = document.getElementById('dashboard-owned');
+    if (data.ownedCards && data.ownedCards.length) {
+      ownedEl.innerHTML = data.ownedCards.slice(0,5).map(function(c) {
+        return '<div class="card-row bg-gray-900 rounded-lg px-3 py-2 flex items-center gap-3 border border-gray-800">' +
+          '<div class="flex-1 min-w-0"><div class="text-sm font-medium truncate">' + esc(c.name) + '</div>' +
+          '<div class="text-xs text-gray-500">' + esc(c.setCode) + ' &middot; ' + c.quantity + '&times; &middot; ' + fmt(c.currentMarketPrice) + '</div></div>' +
+          '<div class="text-right"><div class="text-xs text-purple-400">' + (c.investmentScore != null ? c.investmentScore.toFixed(1) : '&#8212;') + '</div>' +
+          '<div class="flex gap-1 flex-wrap justify-end mt-0.5">' + (c.investmentSignals||[]).slice(0,2).map(signalBadge).join('') + '</div></div></div>';
+      }).join('');
+    } else {
+      ownedEl.innerHTML = '<div class="text-gray-600 text-sm">No collection data yet &mdash; import some cards.</div>';
+    }
+    var oppEl = document.getElementById('dashboard-opportunities');
+    if (data.topOpportunities && data.topOpportunities.length) {
+      oppEl.innerHTML = data.topOpportunities.slice(0,5).map(function(c) {
+        return '<div class="card-row bg-gray-900 rounded-lg px-3 py-2 flex items-center gap-3 border border-gray-800">' +
+          '<div class="flex-1 min-w-0"><div class="text-sm font-medium truncate">' + esc(c.name) + '</div>' +
+          '<div class="text-xs text-gray-500">' + esc(c.setCode||'') + ' &middot; ' + fmt(c.prices && c.prices.usd) + '</div></div>' +
+          '<div class="text-right"><div class="text-xs text-purple-400">' + (c.investmentScore != null ? c.investmentScore.toFixed(1) : '&#8212;') + '</div>' +
+          '<div class="flex gap-1 flex-wrap justify-end mt-0.5">' + (c.investmentSignals||[]).slice(0,2).map(signalBadge).join('') + '</div></div></div>';
+      }).join('');
+    } else {
+      oppEl.innerHTML = '<div class="text-gray-600 text-sm">Run Scryfall ingest to populate card data.</div>';
+    }
+  } catch(err) {
+    document.getElementById('dashboard-owned').innerHTML = '<div class="text-red-500 text-sm">' + esc(err.message) + '</div>';
+  }
+}
+
+// All Cards
+var allCardsDebounce;
+function loadAllCards() { clearTimeout(allCardsDebounce); allCardsDebounce = setTimeout(_loadAllCards, 300); }
+async function _loadAllCards() {
+  var q = document.getElementById('allcards-q').value;
+  var rarity = document.getElementById('allcards-rarity').value;
+  var ownedOnly = document.getElementById('owned-only').checked;
+  var el = document.getElementById('allcards-table');
+  el.innerHTML = '<div class="text-gray-600 text-sm">Loading...</div>';
+  try {
+    var params = 'page=1&limit=50' + (q ? '&q=' + encodeURIComponent(q) : '') + (rarity ? '&rarity=' + rarity : '');
+    var data = await apiFetch('/api/scryfall/cards?' + params);
+    var cards = data.cards || data.results || [];
+    var colData = await apiFetch('/api/collection?limit=2000').catch(function(){return {cards:[]};});
+    var ownedMap = {};
+    (colData.cards||[]).forEach(function(c){ if(c.scryfallId) ownedMap[c.scryfallId] = (ownedMap[c.scryfallId]||0) + c.quantity; });
+    if (ownedOnly) cards = cards.filter(function(c){ return ownedMap[c.scryfallId]; });
+    if (!cards.length) { el.innerHTML = '<div class="text-gray-600 text-sm">No cards found.</div>'; return; }
+    el.innerHTML = '<table class="w-full text-xs text-left border-collapse"><thead><tr class="text-gray-500 border-b border-gray-800">' +
+      '<th class="py-2 pr-4">Name</th><th class="py-2 pr-4">Set</th><th class="py-2 pr-4">Rarity</th>' +
+      '<th class="py-2 pr-4 text-right">Price</th><th class="py-2 pr-4 text-right">Score</th><th class="py-2">Signals</th>' +
+      '</tr></thead><tbody>' +
+      cards.map(function(c) {
+        var owned = ownedMap[c.scryfallId];
+        var price = (c.prices && c.prices.usd) || (c.financialSnapshot && c.financialSnapshot.usd);
+        return '<tr class="card-row border-b border-gray-900"><td class="py-1.5 pr-4 font-medium">' + esc(c.name) +
+          (owned ? ' <span class="ml-1 bg-purple-900 text-purple-300 text-xs px-1.5 py-0.5 rounded">' + owned + '&times;</span>' : '') +
+          '</td><td class="py-1.5 pr-4 text-gray-500">' + esc(c.setCode||c.set_code||'') +
+          '</td><td class="py-1.5 pr-4 capitalize text-gray-500">' + esc(c.rarity||'') +
+          '</td><td class="py-1.5 pr-4 text-right">' + fmt(price) +
+          '</td><td class="py-1.5 pr-4 text-right text-purple-400">' + (c.investmentScore != null ? c.investmentScore.toFixed(1) : '&#8212;') +
+          '</td><td class="py-1.5">' + (c.investmentSignals||[]).slice(0,3).map(signalBadge).join(' ') + '</td></tr>';
+      }).join('') + '</tbody></table>';
+  } catch(err) { el.innerHTML = '<div class="text-red-500 text-sm">' + esc(err.message) + '</div>'; }
+}
+
+// My Collection
+var colDebounce;
+function loadCollection() { clearTimeout(colDebounce); colDebounce = setTimeout(_loadCollection, 300); }
+async function _loadCollection() {
+  var q = document.getElementById('col-q').value;
+  var status = document.getElementById('col-status').value;
+  var source = document.getElementById('col-source').value;
+  var el = document.getElementById('collection-table');
+  el.innerHTML = '<div class="text-gray-600 text-sm">Loading...</div>';
+  try {
+    var params = 'page=' + collectionPage + '&limit=50' +
+      (q ? '&q=' + encodeURIComponent(q) : '') + (status ? '&status=' + encodeURIComponent(status) : '') + (source ? '&source=' + source : '');
+    var data = await apiFetch('/api/collection?' + params);
+    var cards = data.cards || [];
+    if (!cards.length) { el.innerHTML = '<div class="text-gray-600 text-sm">No cards. Import a CSV to get started.</div>'; return; }
+    el.innerHTML = '<table class="w-full text-xs text-left border-collapse"><thead><tr class="text-gray-500 border-b border-gray-800">' +
+      '<th class="py-2 pr-4">Name</th><th class="py-2 pr-3">Set</th><th class="py-2 pr-3">Cond</th>' +
+      '<th class="py-2 pr-3">Foil</th><th class="py-2 pr-3">Lang</th><th class="py-2 pr-3 text-center">Qty</th>' +
+      '<th class="py-2 pr-3 text-right">Market</th><th class="py-2 pr-3">Status</th><th class="py-2 pr-3">Source</th><th class="py-2">Act</th>' +
+      '</tr></thead><tbody>' +
+      cards.map(function(c) {
+        var statusOpts = ['In Collection','Listed for Sale','Sold'].map(function(s){ return '<option' + (s===c.status?' selected':'') + '>' + s + '</option>'; }).join('');
+        return '<tr class="card-row border-b border-gray-900" id="row-' + c._id + '">' +
+          '<td class="py-1.5 pr-4 font-medium">' + esc(c.name) + '</td>' +
+          '<td class="py-1.5 pr-3 text-gray-500">' + esc(c.setCode) + '</td>' +
+          '<td class="py-1.5 pr-3 ' + condColor(c.condition) + '">' + esc(c.condition) + '</td>' +
+          '<td class="py-1.5 pr-3">' + (c.isFoil ? '<span class="text-yellow-400">&#10022;</span>' : '') + '</td>' +
+          '<td class="py-1.5 pr-3 text-gray-500">' + esc(c.language) + '</td>' +
+          '<td class="py-1.5 pr-3 text-center">' +
+            '<button onclick="adjustQty(\'' + c._id + '\',' + (c.quantity-1) + ')" class="text-gray-500 hover:text-white px-1">&minus;</button>' +
+            '<span id="qty-' + c._id + '">' + c.quantity + '</span>' +
+            '<button onclick="adjustQty(\'' + c._id + '\',' + (c.quantity+1) + ')" class="text-gray-500 hover:text-white px-1">+</button>' +
+          '</td>' +
+          '<td class="py-1.5 pr-3 text-right">' + fmt(c.echoPrices && c.echoPrices.tcgMarket) + '</td>' +
+          '<td class="py-1.5 pr-3"><select onchange="updateStatus(\'' + c._id + '\',this.value)" class="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs focus:outline-none ' + statusColor(c.status) + '">' + statusOpts + '</select></td>' +
+          '<td class="py-1.5 pr-3 text-gray-500">' + esc(c.source) + '</td>' +
+          '<td class="py-1.5"><button onclick="deleteCollectionCard(\'' + c._id + '\')" class="text-gray-600 hover:text-red-400 text-xs">&times;</button></td>' +
+        '</tr>';
+      }).join('') + '</tbody></table>';
+    var pages = Math.ceil(data.total / 50);
+    var pagEl = document.getElementById('collection-pagination');
+    pagEl.innerHTML = pages > 1 ? Array.from({length: Math.min(pages,10)}, function(_,i){return i+1;}).map(function(p){
+      return '<button onclick="setColPage(' + p + ')" class="px-3 py-1 rounded text-xs ' + (p===collectionPage ? 'bg-purple-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700') + '">' + p + '</button>';
+    }).join('') : '';
+  } catch(err) { el.innerHTML = '<div class="text-red-500 text-sm">' + esc(err.message) + '</div>'; }
+}
+
+function setColPage(p) { collectionPage = p; loadCollection(); }
+
+async function adjustQty(id, qty) {
+  if (qty < 0) return;
+  try {
+    await apiFetch('/api/collection/' + id, {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({quantity: qty})});
+    document.getElementById('qty-' + id).textContent = qty;
+    if (qty === 0) loadCollection();
+  } catch(err) { alert(err.message); }
+}
+
+async function updateStatus(id, status) {
+  var soldPrice = null;
+  if (status === 'Sold') soldPrice = prompt('Sold price (leave blank to skip earnings tracking):');
+  try { await apiFetch('/api/collection/' + id, {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status: status, soldPrice: soldPrice})}); }
+  catch(err) { alert(err.message); loadCollection(); }
+}
+
+async function deleteCollectionCard(id) {
+  if (!confirm('Remove this card from your collection?')) return;
+  try { await apiFetch('/api/collection/' + id, {method:'DELETE'}); loadCollection(); }
+  catch(err) { alert(err.message); }
+}
+
+// Import
+function handleFileSelect(input) { if (input.files[0]) setFile(input.files[0]); }
+function handleDrop(e) { e.preventDefault(); if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]); }
+function setFile(file) {
+  currentFile = file;
+  var fn = document.getElementById('dropzone-filename');
+  fn.textContent = file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)';
+  fn.style.display = '';
+  var pb = document.getElementById('preview-btn');
+  pb.disabled = false;
+  pb.className = 'bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded text-sm transition-colors';
+  document.getElementById('import-result').style.display = 'none';
+  document.getElementById('import-progress').style.display = 'none';
+  document.getElementById('preview-panel').style.display = 'none';
+}
+
+async function doPreview() {
+  if (!currentFile) return;
+  var fd = new FormData();
+  fd.append('file', currentFile);
+  var src = document.getElementById('source-override').value;
+  if (src) fd.append('source', src);
+  try {
+    var preview = await apiFetch('/api/collection/import/preview', {method:'POST', body: fd});
+    document.getElementById('preview-source').textContent = preview.detectedSource + ' (' + Math.round(preview.confidence*100) + '% confident)';
+    document.getElementById('preview-counts').textContent = preview.totalRows + ' rows · ~' + preview.estimatedInsert + ' new · ~' + preview.estimatedUpdate + ' updates · ' + preview.estimatedSkip + ' skipped';
+    if (preview.defaultsApplied && preview.defaultsApplied.length) {
+      var d = document.getElementById('preview-defaults');
+      d.textContent = '⚠ ' + preview.defaultsApplied.join(', ');
+      d.style.display = '';
+    }
+    document.getElementById('preview-table').innerHTML = buildPreviewTable(preview.sampleRows);
+    document.getElementById('preview-panel').style.display = '';
+    var ib = document.getElementById('import-btn');
+    ib.disabled = false;
+    ib.textContent = 'Import ' + preview.totalRows + ' Cards';
+    ib.className = 'bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded text-sm transition-colors';
+  } catch(err) { alert('Preview failed: ' + err.message); }
+}
+
+function buildPreviewTable(rows) {
+  if (!rows || !rows.length) return '';
+  return '<table class="w-full text-xs text-left"><thead><tr class="text-gray-500"><th class="pr-3 py-1">Name</th><th class="pr-3">Set</th><th class="pr-3">Cond</th><th class="pr-3">Foil</th><th class="pr-3">Qty</th><th>Lang</th></tr></thead><tbody>' +
+    rows.map(function(r){ return '<tr><td class="pr-3 py-0.5">' + esc(r.name) + '</td><td class="pr-3 text-gray-500">' + esc(r.setCode) + '</td><td class="pr-3">' + esc(r.condition) + '</td><td class="pr-3">' + (r.isFoil?'&#10022;':'') + '</td><td class="pr-3">' + r.quantity + '</td><td>' + esc(r.language) + '</td></tr>'; }).join('') +
+    '</tbody></table>';
+}
+
+async function doImport() {
+  if (!currentFile) return;
+  document.getElementById('import-btn').disabled = true;
+  document.getElementById('import-progress').style.display = '';
+  document.getElementById('import-result').style.display = 'none';
+  var fd = new FormData();
+  fd.append('file', currentFile);
+  var src = document.getElementById('source-override').value;
+  if (src) fd.append('source', src);
+  fd.append('mergeStrategy', document.getElementById('merge-strategy').value);
+  try {
+    var result = await apiFetch('/api/collection/import', {method:'POST', body: fd});
+    setProgress(result.inserted + result.updated + result.skipped, result.inserted + result.updated + result.skipped + result.errorCount, false);
+    showImportResult(result);
+    loadImportHistory();
+  } catch(err) {
+    showImportResult(null, err.message);
+  }
+  document.getElementById('import-btn').disabled = false;
+}
+
+function setProgress(processed, total, echoSyncing) {
+  var pct = total ? Math.round(processed/total*100) : 100;
+  document.getElementById('progress-bar').style.width = pct + '%';
+  document.getElementById('progress-pct').textContent = pct + '%';
+  document.getElementById('progress-label').textContent = processed + ' / ' + total + ' cards';
+  document.getElementById('echo-sync-label').style.display = echoSyncing ? '' : 'none';
+}
+
+function showImportResult(result, error) {
+  var el = document.getElementById('import-result');
+  el.style.display = '';
+  if (error) { document.getElementById('result-summary').innerHTML = '<span class="text-red-400">Import failed: ' + esc(error) + '</span>'; return; }
+  document.getElementById('result-summary').innerHTML =
+    '<span class="text-green-400 font-medium">' + result.inserted + ' inserted</span> &middot; ' +
+    '<span class="text-yellow-400">' + result.updated + ' updated</span> &middot; ' +
+    '<span class="text-gray-400">' + result.skipped + ' skipped</span> &middot; ' +
+    '<span class="text-gray-500">' + result.durationMs + 'ms</span> ' +
+    '<a href="#" onclick="switchTab(\'collection\')" class="ml-3 text-purple-400 hover:text-purple-300">View Collection &rarr;</a>';
+}
+
+async function loadImportHistory() {
+  var el = document.getElementById('import-history');
+  try {
+    var jobs = await apiFetch('/api/collection/import/history');
+    if (!jobs.length) { el.innerHTML = '<div class="text-gray-600 text-xs">No imports yet.</div>'; return; }
+    el.innerHTML = jobs.map(function(j) {
+      return '<div class="bg-gray-900 rounded-lg px-3 py-2 flex items-center gap-3 border border-gray-800 text-xs">' +
+        '<span class="text-gray-400 capitalize">' + esc(j.source) + '</span>' +
+        '<span class="text-gray-600 truncate max-w-32">' + esc(j.filename) + '</span>' +
+        '<span class="text-green-400">' + j.inserted + ' new</span>' +
+        '<span class="text-yellow-400">' + j.updated + ' updated</span>' +
+        '<span class="ml-auto text-gray-600">' + new Date(j.createdAt).toLocaleDateString() + '</span>' +
+        '<span class="px-1.5 py-0.5 rounded ' + (j.status==='complete'?'bg-green-900 text-green-300':j.status==='failed'?'bg-red-900 text-red-300':'bg-gray-800 text-gray-400') + '">' + j.status + '</span></div>';
+    }).join('');
+  } catch(e) { el.innerHTML = '<div class="text-gray-600 text-xs">Could not load history.</div>'; }
+}
+
+// Sync
+function addSyncLog(msg) {
+  syncLog.unshift('[' + new Date().toLocaleTimeString() + '] ' + msg);
+  document.getElementById('sync-log').innerHTML = syncLog.slice(0,30).map(function(l){ return '<div>' + esc(l) + '</div>'; }).join('');
+}
+
+async function doEchoSync() {
+  document.getElementById('sync-status').textContent = 'Starting sync...';
+  addSyncLog('Initiated EchoMTG full sync');
+  try {
+    await apiFetch('/api/collection/sync/echo', {method:'POST'});
+    document.getElementById('sync-status').textContent = 'Sync started — running in background';
+    addSyncLog('Sync running in background');
+  } catch(err) {
+    document.getElementById('sync-status').textContent = 'Error: ' + err.message;
+    addSyncLog('Sync error: ' + err.message);
+  }
+}
+
+loadDashboard();
+</script>
+</body>
 </html>
